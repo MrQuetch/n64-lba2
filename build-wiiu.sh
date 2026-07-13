@@ -4,7 +4,7 @@
 #
 # Wii U build wrapper — invokes the devkitpro/devkitppc Docker image with
 # the devkitPPC + WUT toolchain, then packages the resulting .rpx into a
-# .wuhb that Aroma can load directly from sd:/wiiu/apps/.
+# .wuhb that the console homebrew environment loads from sd:/wiiu/apps/.
 #
 # Usage:
 #   ./build-wiiu.sh                 # configure + build + package

@@ -49,14 +49,14 @@ static inline void SDL_Delay(U32 ms) {
 
 static inline SDL_Keymod SDL_GetModState(void) { return SDL_KMOD_NONE; }
 
-// On Aroma the SD card is mounted at `/vol/external01/` — the raw FS path
-// the Wii U OS sees. The `sd:/` prefix common in homebrew docs is a libwhb
+// On the console the SD card is mounted at `/vol/external01/` — the raw FS
+// path the Wii U OS sees. The `sd:/` prefix common in homebrew docs is a libwhb
 // convention; without libwhb the newlib runtime in WUT does NOT recognise
 // it, and stat()/fopen() on `sd:/...` paths silently returns -1 even when
 // the file is physically present. Use the OS-canonical `/vol/external01/`
 // prefix so the engine's filesystem checks find our data on real hardware.
 //
-// Under Cemu (or any launcher without an Aroma SD mount) that path does not
+// Under Cemu (or any launcher without an SD mount) that path does not
 // exist; fall back to the .wuhb romfs at `/vol/content/`, which carries the
 // essential game data plus a `saves/` dir (read-only — good enough for
 // render/debug iteration, not for persisting saves).
