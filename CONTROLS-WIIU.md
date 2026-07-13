@@ -8,6 +8,7 @@ Defaults:
 | Input            | Action                                   |
 |------------------|------------------------------------------|
 | Left stick       | Move (up/down walk, left/right turn)     |
+| D-pad            | Move (mirrors the left stick)            |
 | ZR / ZL          | Walk forward / backward (secondary)      |
 | A                | Action (use/talk/search)                 |
 | X                | Action (behaviour move: jump, punch, …)  |
@@ -20,10 +21,9 @@ Defaults:
 | L3 (stick click) | Dodge                                    |
 | R3 (stick click) | Recenter camera                          |
 | Right stick ↑/↓  | Camera level up / down                   |
-| D-pad ↑          | Protection spell                         |
-| D-pad ↓          | Jetpack / Protopack                      |
-| D-pad ←          | Lightning spell                          |
-| D-pad →          | Meca-penguin                             |
+
+Spells, the Protopack/Jetpack and the meca-penguin are on the GamePad
+touch panel (below) or via the inventory.
 
 ## Touch panel (GamePad screen)
 
