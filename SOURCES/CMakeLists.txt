@@ -24,7 +24,13 @@ set(SOURCES_FILES AMBIANCE.CPP ANIMTEX.CPP BEZIER.CPP BUILD_INFO.CPP BUGGY.CPP C
 set(SOURCES_FILES_ASM COMPRESS.CPP FIRE.CPP FLOW_A.CPP FUNC.CPP GRILLE_A.CPP PLASMA.CPP)
 
 # Windows specific sources
-set(SOURCES_FILES_WIN JOYSTICK.CPP)
+if(LBA2_TARGET_WIIU)
+    # SDL3 gamepad backend swapped for VPAD/KPAD stub on Wii U.
+    # TOUCHPANEL_WIIU: DRC quick-action touch panel (layout/render/hit test).
+    set(SOURCES_FILES_WIN JOYSTICK_WIIU_STUB.CPP TOUCHPANEL_WIIU.CPP)
+else()
+    set(SOURCES_FILES_WIN JOYSTICK.CPP)
+endif()
 
 # DOS specific sources
 set(SOURCES_FILES_DOS CRITICAL.CPP HERCULE.CPP)
@@ -80,3 +86,9 @@ endif()
 # Source files in folder but not used on CMakeScript:
 # - DEC.ASM
 # - MESSTWIN.CPP (Commented on source file "GERELIFE.CPP")
+
+# Wii U: convert the linked ELF to .rpx (Wii U executable format).
+# WUHB packaging is done by build-wiiu.sh after the make step (less CMake magic).
+if(LBA2_TARGET_WIIU)
+    wut_create_rpx(lba2)
+endif()

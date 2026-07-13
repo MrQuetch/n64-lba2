@@ -19,14 +19,21 @@ else()
     enable_language(C CXX)
 endif()
 
-set(CMAKE_CXX_STANDARD 98)
+# WUT (Wii U) headers use alignas / enum class and need C++11+. Same for KOS
+# headers when LBA2_TARGET_DREAMCAST is set by a cross-compile toolchain.
+# The engine itself stays C++98-compatible regardless.
+if(LBA2_TARGET_WIIU OR LBA2_TARGET_DREAMCAST)
+    set(CMAKE_CXX_STANDARD 14)
+else()
+    set(CMAKE_CXX_STANDARD 98)
+endif()
 
 # Compilation options
 set(SOUND_BACKEND "sdl" CACHE STRING "Sound backend to be used")
 set(MVIDEO_BACKEND "smacker" CACHE STRING "Motion Video backend to be used")
 # Compilation options sanitization
 ## Sound backend
-set(SOUND_BACKEND_OPTIONS null miles sdl)
+set(SOUND_BACKEND_OPTIONS null miles sdl wiiu)
 set_property(CACHE SOUND_BACKEND PROPERTY STRINGS ${SOUND_BACKEND_OPTIONS})
 if (NOT SOUND_BACKEND IN_LIST SOUND_BACKEND_OPTIONS)
     message(SEND_ERROR "SOUND_BACKEND set with invalid option '${SOUND_BACKEND}'. Valid options are: ${SOUND_BACKEND_OPTIONS}")
@@ -52,7 +59,7 @@ endif()
 # Performance options
 option(LBA2_NATIVE_ARCH "Use -march=native for host-optimized build (not portable)" OFF)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT LBA2_TARGET_WIIU AND NOT LBA2_TARGET_DREAMCAST)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
     if(ipo_supported)
@@ -71,7 +78,17 @@ if(LBA2_NATIVE_ARCH)
 endif()
 
 # Dependencies
-find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3-shared)
+if(LBA2_TARGET_WIIU OR LBA2_TARGET_DREAMCAST)
+    # No SDL3 on Wii U / Dreamcast. Provide an empty INTERFACE target so the
+    # existing `target_link_libraries(... SDL3::SDL3)` calls in SVGA/SOURCES/
+    # CONSOLE remain syntactically valid; the SDL-using .CPP files are
+    # excluded from the build via per-CMakeLists guards instead.
+    if(NOT TARGET SDL3::SDL3)
+        add_library(SDL3::SDL3 INTERFACE IMPORTED)
+    endif()
+else()
+    find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3-shared)
+endif()
 
 # Engine version string. Reads the canonical value from the VERSION file
 # at the repo root and (optionally) appends -dirty when the working tree
