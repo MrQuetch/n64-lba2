@@ -10,7 +10,21 @@
 #include <SVGA/SCREEN.H>
 #include <SVGA/VIDEO.H>
 #include <SYSTEM/KEYBOARD_KEYS.H>
+#include <SYSTEM/LOGPRINT.H>
 #include <stdint.h>
+
+#ifdef LBA2_TARGET_WIIU
+#  include <SYSTEM/wiiu_endian.h>
+#  define WIIU_TRACE(s) LogPrintf("[trace] " s)
+extern "C" void WiiU_AnimsCanary(const char *where);
+extern "C" void WiiU_PtrFile3DCanary(const char *where);
+#  define WIIU_CANARY(where) WiiU_AnimsCanary(where)
+#  define WIIU_PTRCANARY(where) WiiU_PtrFile3DCanary(where)
+#else
+#  define WIIU_TRACE(s) ((void)0)
+#  define WIIU_CANARY(where) ((void)0)
+#  define WIIU_PTRCANARY(where) ((void)0)
+#endif
 
 extern S32 FlagAnimWhoSpeak; // MESSAGE.CPP
 
@@ -376,8 +390,49 @@ void *GivePtrAnim(S32 index) {
 //▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 /*══════════════════════════════════════════════════════════════════════════*/
 void *GivePtrBody(S32 index) {
-    return (HQR_Get(HQR_Bodys, index));
+    void *p = HQR_Get(HQR_Bodys, index);
+#ifdef LBA2_TARGET_WIIU
+    if (p) {
+        static int s_logged = 0;
+        if (s_logged < 4) {
+            unsigned int *u32 = (unsigned int *)p;
+            unsigned short *sh = (unsigned short *)((unsigned char *)p + 4);
+            LogPrintf("[GivePtrBody] idx=%d ptr=%p pre-swap Info=0x%08X SizeHeader=0x%04X u32[8]=0x%08X\n",
+                      (int)index, p, (unsigned)u32[0], (unsigned)sh[0], (unsigned)u32[8]);
+        }
+        WiiU_SwapBodyHeader(p);
+        if (s_logged < 4) {
+            unsigned int *u32 = (unsigned int *)p;
+            unsigned short *sh = (unsigned short *)((unsigned char *)p + 4);
+            LogPrintf("[GivePtrBody] idx=%d ptr=%p post-swap SizeHeader=%u NbGrp=%d OffGrp=%d NbPts=%d OffPts=%d NbNorm=%d OffNorm=%d NbNF=%d OffNF=%d\n",
+                      (int)index, p, (unsigned)sh[0],
+                      (int)u32[8],  (int)u32[9],
+                      (int)u32[10], (int)u32[11],
+                      (int)u32[12], (int)u32[13],
+                      (int)u32[14], (int)u32[15]);
+            s_logged++;
+        }
+    }
+#endif
+    return p;
 }
+//▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+#ifdef LBA2_TARGET_WIIU
+/*══════════════════════════════════════════════════════════════════════════*/
+// OBJFIX.HQR bodies (inventory objects, thrown extras, dart, holomap objs)
+// are LE body files like BODY.HQR — without the header swap DoFoundObj's
+// Return_BodyDisplay dereferences byte-flipped group offsets (crash on the
+// "found object" popup). Swap is idempotent, so cache reloads are covered.
+void *GivePtrObjFix(S32 index) {
+    void *p = HQR_Get(HQR_ObjFix, index);
+
+    if (p) {
+        WiiU_SwapBodyHeader(p);
+    }
+
+    return p;
+}
+#endif
 //▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 
 /*══════════════════════════════════════════════════════════════════════════*/
@@ -428,6 +483,12 @@ void StartInitObj(U8 numobj) {
     T_OBJET *ptrobj;
 
     ptrobj = &ListObjet[numobj];
+
+#ifdef LBA2_TARGET_WIIU
+    if (numobj == 1) {
+        WIIU_PTRCANARY("StartInitObj(1) entry");
+    }
+#endif
 
     if (ptrobj->Flags & SPRITE_3D) {
         if (ptrobj->HitForce != 0)
@@ -507,6 +568,8 @@ void StartInitObj(U8 numobj) {
 void StartInitAllObjs() {
     U8 n;
 
+    WIIU_PTRCANARY("StartInitAllObjs entry");
+
     // Faut-il le laisser ?
     // Cela sert a virer le compteur du pingouin si on meurt
     // pendant qu'il est actif
@@ -515,6 +578,8 @@ void StartInitAllObjs() {
         ListIncrustDisp[ListObjet[NUM_PINGOUIN].Info1].Num = -1;
         ListObjet[NUM_PINGOUIN].Info1 = -1;
     }
+
+    WIIU_PTRCANARY("StartInitAllObjs after pingouin check, before loop");
 
     for (n = 1; n < NbObjets; n++) {
         StartInitObj(n);
@@ -781,8 +846,15 @@ void SetComportement(U8 comportement) {
     U16 memogenanim;
     T_OBJET *ptrobj = &ListObjet[NUM_PERSO];
 
-    if (comportement >= MAX_COMPORTEMENTS)
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[trace] SetComportement(comportement=%d) enter, current Comportement=%d\n",
+              (int)comportement, (int)Comportement);
+#endif
+
+    if (comportement >= MAX_COMPORTEMENTS) {
+        WIIU_TRACE("SetComportement: comportement >= MAX -> early return");
         return;
+    }
 
     switch (Comportement) // test ancien comportement
     {
@@ -863,7 +935,9 @@ void SetComportement(U8 comportement) {
     Comportement = comportement;
     PtrComportement = &ListComportement[comportement];
 
+    WIIU_PTRCANARY("SetComportement before write PtrFile3D[0]");
     ptrobj->PtrFile3D = PtrComportement->PtrFile3d;
+    WIIU_PTRCANARY("SetComportement after write PtrFile3D[0]");
 
     memogenbody = ptrobj->GenBody;
     ptrobj->GenBody = NO_BODY;
@@ -873,7 +947,14 @@ void SetComportement(U8 comportement) {
     // mais cela peut avoir des effets secondaires, donc méfie Garçon !
     ptrobj->Obj.NextBody.Num = -1;
 
+    WIIU_PTRCANARY("SetComportement before InitBody");
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[trace] SetComportement: InitBody(gennewbody=%d, NUM_PERSO) enter\n", (int)memogenbody);
+#endif
     InitBody(memogenbody, NUM_PERSO);
+    WIIU_TRACE("SetComportement: InitBody exit");
+    WIIU_CANARY("SetComportement after InitBody");
+    WIIU_PTRCANARY("SetComportement after InitBody");
 
     memogenanim = ptrobj->GenAnim;
 
@@ -886,19 +967,32 @@ void SetComportement(U8 comportement) {
         // sauvegarde
         if (!FlagLoadGame /*OR ptrobj->Move==MOVE_MANUAL*/) {
             ptrobj->FlagAnim = 0;
+            WIIU_TRACE("SetComportement: InitAnim(GEN_ANIM_RIEN, ANIM_REPEAT) enter");
             InitAnim(GEN_ANIM_RIEN, ANIM_REPEAT, NUM_PERSO);
+            WIIU_TRACE("SetComportement: InitAnim exit");
+            WIIU_PTRCANARY("SetComportement after InitAnim");
+            WIIU_TRACE("SetComportement: ObjectSetFrame(0) enter");
             ObjectSetFrame(&(ptrobj->Obj), 0);
+            WIIU_TRACE("SetComportement: ObjectSetFrame exit");
+            WIIU_PTRCANARY("SetComportement after ObjectSetFrame");
         } else {
+            WIIU_TRACE("SetComportement: InitAnim(memogenanim) enter");
             InitAnim(memogenanim, ptrobj->FlagAnim, NUM_PERSO);
+            WIIU_TRACE("SetComportement: InitAnim exit");
         }
     } else {
         // oui, alors on reprend à la frame memorisée juste
         // avant le changement de cube
         ptrobj->FlagAnim = 0;
+        WIIU_TRACE("SetComportement: InitAnim(MemoAnim) enter");
         InitAnim(MemoAnim, MemoFlagAnim, NUM_PERSO);
+        WIIU_TRACE("SetComportement: InitAnim exit");
+        WIIU_TRACE("SetComportement: ClearExtra+ObjectSetFrame(MemoFrame) enter");
         ClearExtra();
         ObjectSetFrame(&(ptrobj->Obj), MemoFrame);
+        WIIU_TRACE("SetComportement: ClearExtra+ObjectSetFrame exit");
     }
+    WIIU_TRACE("SetComportement: end");
 }
 
 //▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
@@ -908,6 +1002,9 @@ void SetComportement(U8 comportement) {
 void RestartPerso() {
     T_OBJET *ptrobj = &ListObjet[NUM_PERSO];
 
+    WIIU_PTRCANARY("RestartPerso entry");
+
+    WIIU_TRACE("RestartPerso: ptrobj field setup enter");
     ptrobj->Move = MOVE_MANUAL;
 
     if (FlagReinit == 0)
@@ -927,10 +1024,22 @@ void RestartPerso() {
     ptrobj->Obj.Anim.Num = 255;   // Sure is not same !
 
     //	ptrobj->Obj.Beta = ValideBeta ;
+    WIIU_TRACE("RestartPerso: ptrobj field setup exit");
+    WIIU_CANARY("RestartPerso after field setup");
+    WIIU_PTRCANARY("RestartPerso after field setup");
 
+    WIIU_TRACE("RestartPerso: InitMove(BoundAngle.Move) enter");
     InitMove(&ptrobj->BoundAngle.Move, 0);
+    WIIU_TRACE("RestartPerso: InitMove exit");
+    WIIU_CANARY("RestartPerso after InitMove");
+    WIIU_PTRCANARY("RestartPerso after InitMove");
 
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[trace] RestartPerso: SetComportement(SaveComportement=%d) enter\n", (int)SaveComportement);
+#endif
     SetComportement(SaveComportement);
+    WIIU_TRACE("RestartPerso: SetComportement exit");
+    WIIU_PTRCANARY("RestartPerso after SetComportement");
     //	SetComportement( Comportement ) ;
 
     //NextAnim tjrs a "rien"
@@ -1198,7 +1307,10 @@ void ChangeCube() {
     //	HQ_StopSample() ;
 
     //	FreeGrille() ;
+    WIIU_TRACE("ChangeCube: ClearScene enter");
     ClearScene();
+    WIIU_TRACE("ChangeCube: ClearScene exit");
+    WIIU_CANARY("after ChangeCube ClearScene");
 
     // perso reinit
 
@@ -1208,27 +1320,53 @@ void ChangeCube() {
     ptrobj->OffsetTrack = -17;
     ptrobj->LabelTrack = -1;
 
+    WIIU_TRACE("ChangeCube: ManageSystem #1 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("ChangeCube: ManageSystem #1 exit");
 
     // lance usine
+    WIIU_TRACE("ChangeCube: LoadScene(NewCube) enter");
     LoadScene(NewCube);
+    WIIU_TRACE("ChangeCube: LoadScene exit");
+    WIIU_CANARY("after ChangeCube LoadScene");
+    WIIU_PTRCANARY("after ChangeCube LoadScene");
 
+    WIIU_TRACE("ChangeCube: ManageSystem #2 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("ChangeCube: ManageSystem #2 exit");
+    WIIU_PTRCANARY("after ChangeCube ManageSystem #2");
 
     if (LastCubeMode != CubeMode
                             OR PLAY_THE_END) {
+        WIIU_TRACE("ChangeCube: ClearHQRs enter");
         ClearHQRs();
+        WIIU_TRACE("ChangeCube: ClearHQRs exit");
+        WIIU_PTRCANARY("after ChangeCube ClearHQRs");
     }
 
+    WIIU_TRACE("ChangeCube: InitDial(START_FILE_ISLAND+Island) enter");
     InitDial(START_FILE_ISLAND + Island); // Pas Mini
+    WIIU_TRACE("ChangeCube: InitDial exit");
+    WIIU_CANARY("after ChangeCube InitDial");
+    WIIU_PTRCANARY("after ChangeCube InitDial");
 
+    WIIU_TRACE("ChangeCube: ManageSystem #3 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("ChangeCube: ManageSystem #3 exit");
+    WIIU_PTRCANARY("after ChangeCube ManageSystem #3");
 
     // load gri
 
+    WIIU_TRACE("ChangeCube: PtrInitGrille(NewCube) enter");
     PtrInitGrille(NewCube); /*	HQR	*/
+    WIIU_TRACE("ChangeCube: PtrInitGrille exit");
+    WIIU_CANARY("after ChangeCube PtrInitGrille");
+    WIIU_PTRCANARY("after ChangeCube PtrInitGrille");
 
+    WIIU_TRACE("ChangeCube: ManageSystem #4 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("ChangeCube: ManageSystem #4 exit");
+    WIIU_PTRCANARY("after ChangeCube ManageSystem #4");
 
     if (!FlagLoadGame) {
         if (FlagChgCube == 1) {
@@ -1248,13 +1386,23 @@ void ChangeCube() {
             ptrobj->Obj.Y = SceneStartY;
             ptrobj->Obj.Z = SceneStartZ;
         }
+#ifdef LBA2_TARGET_WIIU
+        LogPrintf("[ChangeCube] FlagChgCube=%d Cube={%d,%d,%d} Scene={%d,%d,%d} Obj#0={%d,%d,%d}\n",
+                  (int)FlagChgCube,
+                  (int)CubeStartX, (int)CubeStartY, (int)CubeStartZ,
+                  (int)SceneStartX, (int)SceneStartY, (int)SceneStartZ,
+                  (int)ptrobj->Obj.X, (int)ptrobj->Obj.Y, (int)ptrobj->Obj.Z);
+#endif
 
         StartYFalling = 0; // init falling Y when fall
         FlagClimbing = FALSE;
         PtrZoneClimb = NULL;
     }
 
+    WIIU_TRACE("ChangeCube: SetLightVector #1 enter");
     SetLightVector(AlphaLight, BetaLight, 0);
+    WIIU_TRACE("ChangeCube: SetLightVector #1 exit");
+    WIIU_CANARY("after ChangeCube SetLightVector #1");
 
     SaveComportement = Comportement;
     //	ValideBeta = ptrobj->Obj.Beta ;
@@ -1262,20 +1410,37 @@ void ChangeCube() {
     if (FlagReajustPosTwinsen
             AND !(ptrobj->WorkFlags & ANIM_MASTER_GRAVITY)
                 AND(ptrobj->CarryBy == -1 OR !(ptrobj->CarryBy & CARRY_BY_DECORS))) {
+        WIIU_TRACE("ChangeCube: ReajustPos branch enter");
         // Recale Twinsen pour eviter de rentrer dans une collision
         if (CubeMode == CUBE_EXTERIEUR) {
+            WIIU_TRACE("ChangeCube: CalculAltitudeObjet enter");
             ShadowX = SceneStartX;
             ShadowY = CalculAltitudeObjet(SceneStartX, SceneStartZ, 0);
             ShadowZ = SceneStartZ;
-        } else
+            WIIU_TRACE("ChangeCube: CalculAltitudeObjet exit");
+        } else {
+            WIIU_TRACE("ChangeCube: GetShadow enter");
             GetShadow(SceneStartX, SceneStartY, SceneStartZ);
+            WIIU_TRACE("ChangeCube: GetShadow exit");
+        }
 
         Nxw = ShadowX;
         Nyw = ShadowY;
         Nzw = ShadowZ;
 
+        WIIU_TRACE("ChangeCube: PtrReajustPos(PtrWorldColBrick) enter");
+#ifdef LBA2_TARGET_WIIU
+        LogPrintf("[ChangeCube] pre-PtrReajustPos Nxw=%d Nyw=%d Nzw=%d Shadow={%d,%d,%d}\n",
+                  (int)Nxw, (int)Nyw, (int)Nzw, (int)ShadowX, (int)ShadowY, (int)ShadowZ);
+#endif
         PtrReajustPos(PtrWorldColBrick(Nxw, Nyw, Nzw));
+        WIIU_TRACE("ChangeCube: PtrReajustPos exit");
+    WIIU_CANARY("after ChangeCube PtrReajustPos");
 
+#ifdef LBA2_TARGET_WIIU
+        LogPrintf("[ChangeCube] post-PtrReajustPos Nxw=%d Nyw=%d Nzw=%d\n",
+                  (int)Nxw, (int)Nyw, (int)Nzw);
+#endif
         ptrobj->Obj.X = Nxw;
         ptrobj->Obj.Y = Nyw;
         ptrobj->Obj.Z = Nzw;
@@ -1285,10 +1450,17 @@ void ChangeCube() {
         ptrobj->Obj.Z = SceneStartZ;
     }
 
+    WIIU_PTRCANARY("before ChangeCube RestartPerso");
+    WIIU_TRACE("ChangeCube: RestartPerso enter");
     RestartPerso();
+    WIIU_TRACE("ChangeCube: RestartPerso exit");
+    WIIU_PTRCANARY("after ChangeCube RestartPerso");
 
     if (!FlagLoadGame) {
+        WIIU_PTRCANARY("before ChangeCube StartInitAllObjs");
+        WIIU_TRACE("ChangeCube: StartInitAllObjs enter");
         StartInitAllObjs();
+        WIIU_TRACE("ChangeCube: StartInitAllObjs exit");
 
         if (!FlagDrawHorizon
                     OR CubeMode +
@@ -1300,7 +1472,9 @@ void ChangeCube() {
         }
     }
 
+    WIIU_TRACE("ChangeCube: ManageSystem #5 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("ChangeCube: ManageSystem #5 exit");
 
     NbLittleKeys = 0;
     MagicBall = -1;
@@ -1313,16 +1487,27 @@ void ChangeCube() {
     TimerNextAmbiance = 0;
 
     if (FlagChgCube == 2 OR FlagChgCube == 0) {
+        WIIU_TRACE("ChangeCube: CameraCenter(1) enter");
         CameraCenter(1);
+        WIIU_TRACE("ChangeCube: CameraCenter(1) exit");
+#ifdef LBA2_TARGET_WIIU
+        LogPrintf("[ChangeCube] post-CameraCenter(1) Twinsen.Obj={%d,%d,%d} StartCube={%d,%d,%d}\n",
+                  (int)ListObjet[0].Obj.X, (int)ListObjet[0].Obj.Y, (int)ListObjet[0].Obj.Z,
+                  (int)StartXCube, (int)StartYCube, (int)StartZCube);
+#endif
     } else {
         StartXCube = ListObjet[NumObjFollow].Obj.X / SIZE_BRICK_XZ;
         StartYCube = (ListObjet[NumObjFollow].Obj.Y + SIZE_BRICK_Y) / SIZE_BRICK_Y;
         StartZCube = ListObjet[NumObjFollow].Obj.Z / SIZE_BRICK_XZ;
 
+        WIIU_TRACE("ChangeCube: CameraCenter(0) enter");
         CameraCenter(0);
+        WIIU_TRACE("ChangeCube: CameraCenter(0) exit");
     }
 
+    WIIU_TRACE("ChangeCube: SetLightVector #2 enter");
     SetLightVector(AlphaLight, BetaLight, 0);
+    WIIU_TRACE("ChangeCube: SetLightVector #2 exit");
 
     if (StopLastMusic)
         StopMusic();
@@ -1344,7 +1529,7 @@ void ChangeCube() {
     if (FlagLoadGame) {
 #if defined(DEBUG_TOOLS) || defined(TEST_TOOLS)
         if ((NumVersion & MASK_NUM_VERSION) != NUM_VERSION) {
-            Message("Warning: Sauvegarde trop ancienne. Je vais tenter de la charger, mais méfie !!", TRUE);
+            Message("Warning: Sauvegarde trop ancienne. Je vais tenter de la charger, mais m\x82" "fie !!", TRUE);
 
             flagload = LoadGameOldVersion();
             //			flagload = FALSE ;	// en essai
@@ -1381,13 +1566,16 @@ void ChangeCube() {
         }
     }
 
+    WIIU_TRACE("ChangeCube: ManageSystem #6 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("ChangeCube: ManageSystem #6 exit");
 
     // Ok, changement de cube terminé
     FlagReinit = 0;
 
     LastValidePos = ValidePos = FALSE;
     ptrobj->CarryBy = -1;
+    WIIU_TRACE("ChangeCube: end of function");
 }
 
 /*══════════════════════════════════════════════════════════════════════════*
@@ -2282,12 +2470,27 @@ void InitBody(U8 gennewbody,
     if (numobj == NUM_PERSO)
         gennewbody = ChoiceHeroBody(gennewbody);
 
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[trace] InitBody: gennewbody=%d numobj=%d, calling SearchBody\n",
+              (int)gennewbody, (int)numobj);
+    if (numobj == 1) {
+        LogPrintf("[InitBody] obj1 PtrFile3D=%p Flags=0x%08X about to call SearchBody\n",
+                  (void*)ptrobj->PtrFile3D, (unsigned)ptrobj->Flags);
+    }
+#endif
+
     if (gennewbody != NO_BODY) {
         newbody = SearchBody(gennewbody, numobj);
+#ifdef LBA2_TARGET_WIIU
+        LogPrintf("[trace] InitBody: SearchBody returned newbody=%d\n", (int)newbody);
+#endif
 
         if (newbody == -1) {
             // protect au cas où ...
             newbody = SearchBody(GEN_BODY_NORMAL, numobj);
+#ifdef LBA2_TARGET_WIIU
+            LogPrintf("[trace] InitBody: SearchBody(GEN_BODY_NORMAL) fallback returned newbody=%d\n", (int)newbody);
+#endif
         }
     } else {
         newbody = -1;
@@ -2306,7 +2509,9 @@ void InitBody(U8 gennewbody,
 
         // Pour pouvoir changer de zv avec un même body
         if (M_XMin == -32000) {
+            WIIU_TRACE("InitBody: InitBodyZV enter");
             InitBodyZV(ptrobj);
+            WIIU_TRACE("InitBody: InitBodyZV exit");
         } else {
             ptrobj->XMin = M_XMin;
             ptrobj->XMax = M_XMax;
@@ -2346,6 +2551,17 @@ void InitSprite(S32 newsprite,
     if (newsprite != -1 AND newsprite != ptrobj->Obj.Body.Num) {
         ptrobj->Obj.Body.Num = newsprite;
 
+#ifdef LBA2_TARGET_WIIU
+        if (ptrobj->Flags & ANIM_3DS) {
+            static int s_n = 0;
+            if (s_n < 32) {
+                s_n++;
+                LogPrintf("[3ds] InitSprite frame=%d (A3DS Num=%d Deb=%d Fin=%d)\n",
+                          (int)newsprite, (int)ptrobj->Coord.A3DS.Num,
+                          (int)ptrobj->Coord.A3DS.Deb, (int)ptrobj->Coord.A3DS.Fin);
+            }
+        }
+#endif
         if (ptrobj->Flags & ANIM_3DS)
             ptr = &PtrZvAnim3DS[newsprite * 8 + 2];
         else {
@@ -4805,6 +5021,18 @@ S32 AffOneObject(T_SORT *pt) {
     typeobj = numobj & ~1023;
     numobj &= 1023;
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        static int s_aff_one_count = 0;
+        if (s_aff_one_count < 8) {
+            LogPrintf("[trace] AffOneObject #%d: numobj=%d typeobj=0x%X pt->Z=%d pt->Xw=%d pt->Yw=%d pt->Zw=%d\n",
+                      s_aff_one_count, (int)numobj, (unsigned)typeobj,
+                      (int)pt->Z, (int)pt->Xw, (int)pt->Yw, (int)pt->Zw);
+            s_aff_one_count++;
+        }
+    }
+#endif
+
     ptrobj = &ListObjet[numobj];
 
     UnsetClip();
@@ -4853,7 +5081,27 @@ S32 AffOneObject(T_SORT *pt) {
             SetClip(0, 0, ModeDesiredX - 1, FlagWater);
         }
 
+#ifdef LBA2_TARGET_WIIU
+        {
+            static int s_obj_disp_count = 0;
+            if (s_obj_disp_count < 4) {
+                LogPrintf("[trace] AffOneObject: calling ObjectDisplay(numobj=%d) #%d\n",
+                          (int)numobj, s_obj_disp_count);
+                s_obj_disp_count++;
+            }
+        }
+#endif
         aff = ObjectDisplay(&ptrobj->Obj);
+#ifdef LBA2_TARGET_WIIU
+        {
+            static int s_obj_disp_done = 0;
+            if (s_obj_disp_done < 4) {
+                LogPrintf("[trace] AffOneObject: ObjectDisplay returned aff=%d #%d\n",
+                          (int)aff, s_obj_disp_done);
+                s_obj_disp_done++;
+            }
+        }
+#endif
 
         if (aff) /* objet pas tout clippé */
         {
@@ -5044,6 +5292,15 @@ S32 AffOneObject(T_SORT *pt) {
     case TYPE_OBJ_ANIM_3DS:
         num = ptrobj->Obj.Body.Num;
 
+#ifdef LBA2_TARGET_WIIU
+        {
+            static int s_n = 0;
+            if (s_n < 16) {
+                s_n++;
+                LogPrintf("[3ds] draw num=%d NumCube=%d\n", (int)num, (int)NumCube);
+            }
+        }
+#endif
         if (ptrobj->WorkFlags & DRAW_SHADOW) {
             S32 nu = ptrobj->CarryBy;
 
@@ -5288,6 +5545,16 @@ void AffScene(S32 flagflip) {
     S_PART_FLOW *ptrflow;
     T_DART *ptrd;
     U8 *changepal = NULL;
+#ifdef LBA2_TARGET_WIIU
+    static U8 affscene_first_done = 0;
+    #define AFF_TRACE(s) do { if (!affscene_first_done) LogPrintf("[trace] AffScene: " s "\n"); } while(0)
+    #define AFF_TRACE_FMT(...) do { if (!affscene_first_done) LogPrintf(__VA_ARGS__); } while(0)
+#else
+    #define AFF_TRACE(s) ((void)0)
+    #define AFF_TRACE_FMT(...) ((void)0)
+#endif
+
+    AFF_TRACE_FMT("[trace] AffScene: entry, flagflip=%d NbObjets=%d CubeMode=%d\n", (int)flagflip, (int)NbObjets, (int)CubeMode);
 
     S32 x, y, z;
     S32 num;
@@ -5352,6 +5619,7 @@ startaffscene:
         break;
 
     case AFF_ALL_FLIP:
+        AFF_TRACE("AFF_ALL_FLIP branch");
         // Pour ecraser MemoClipWindowYMin qui est
         // testé plus loin
         if (!FlagAnimWhoSpeak)
@@ -5362,19 +5630,28 @@ startaffscene:
             UnsetClipWindow();
         }
 
+        AFF_TRACE("ClearImpactRain enter");
         ClearImpactRain();
+        AFF_TRACE("ClearImpactRain exit");
 
     case AFF_ALL_NO_FLIP:
+        AFF_TRACE("LockTimer enter");
         LockTimer();
+        AFF_TRACE("LockTimer exit, BoxReset enter");
         BoxReset();
+        AFF_TRACE("BoxReset exit, Cls enter");
         Cls();
+        AFF_TRACE("Cls exit, RefreshGrille enter");
 
         RefreshGrille();
 
+        AFF_TRACE("RefreshGrille exit, ChangeIncrustPos enter");
         ChangeIncrustPos(oldxporg, oldyporg, XpOrgw, YpOrgw);
+        AFF_TRACE("ChangeIncrustPos exit, CopyScreen enter");
         //			HQ_ChangeBalanceSamples( oldxporg, oldyporg ) ;
 
         CopyScreen(Log, Screen);
+        AFF_TRACE("CopyScreen exit");
 
         if (flagflip == AFF_ALL_FLIP
                                 AND !CinemaMode AND MemoClipWindowYMin > 0) {
@@ -5383,6 +5660,7 @@ startaffscene:
         }
         break;
     }
+    AFF_TRACE("AFF_ALL_FLIP block exit, entering object pre-pass");
 
     /*------------------------------------------------------------------------*/
 
@@ -5409,6 +5687,8 @@ startaffscene:
 
     /*------------------------------------------------------------------------*/
     for (n = 0; n < NbObjets; n++, ptrobj++) {
+        AFF_TRACE_FMT("[trace] AffScene: obj-prepass n=%d Flags=0x%08X Body.Num=%d\n",
+                      (int)n, (unsigned)ptrobj->Flags, (int)ptrobj->Obj.Body.Num);
         ptrobj->WorkFlags &= ~WAS_DRAWN;
 
         if ((ptrobj->Flags & OBJ_BACKGROUND)
@@ -5424,8 +5704,11 @@ startaffscene:
         }
 
         if ((ptrobj->Obj.Body.Num == -1)
-                OR(ptrobj->Flags & INVISIBLE))
+                OR(ptrobj->Flags & INVISIBLE)) {
+            AFF_TRACE("  -> skip (Body.Num=-1 or INVISIBLE)");
             continue;
+        }
+        AFF_TRACE("  -> calling PtrProjectPoint+TreeInsert");
 
         x = ptrobj->Obj.X;
         y = ptrobj->Obj.Y;
@@ -5521,11 +5804,27 @@ startaffscene:
         }
     }
 
+    AFF_TRACE("object pre-pass loop exit");
+
     /*------------------------------------------------------------------------*/
     /* objet temporaires (throw, bonus...) */
 
+    AFF_TRACE("Extras pre-pass loop enter");
+#ifdef LBA2_TARGET_WIIU
+    if (!affscene_first_done) {
+        LogPrintf("[trace] AffScene: ListExtra=%p MAX_EXTRAS=%d\n",
+                  (void*)ListExtra, (int)MAX_EXTRAS);
+        T_EXTRA *pdbg = ListExtra;
+        for (int k = 0; k < 8; k++, pdbg++) {
+            LogPrintf("[trace] AffScene: ListExtra[%d] Sprite=%d Flags=0x%08X\n",
+                      k, (int)pdbg->Sprite, (unsigned)pdbg->Flags);
+        }
+    }
+#endif
     ptrextra = ListExtra;
     for (n = 0; n < MAX_EXTRAS; n++, ptrextra++) {
+        AFF_TRACE_FMT("[trace] AffScene: extra n=%d Sprite=%d Flags=0x%08X\n",
+                      (int)n, (int)ptrextra->Sprite, (unsigned)ptrextra->Flags);
         if (ptrextra->Sprite == -1)
             continue;
 
@@ -5652,6 +5951,7 @@ startaffscene:
 
     /*------------------------------------------------------------------------*/
     /* Flechettes */
+    AFF_TRACE("Extras pre-pass loop exit, Darts loop enter");
     ptrd = ListDart;
 
     for (n = 0; n < MAX_DARTS; n++, ptrd++) {
@@ -5684,6 +5984,7 @@ startaffscene:
         }
     }
 
+    AFF_TRACE("Darts loop exit, Flows loop enter");
     /*------------------------------------------------------------------------*/
     // Insertion des flows de pixels
     ptrflow = ListPartFlow;
@@ -5708,11 +6009,13 @@ startaffscene:
     //				 boucle aff all objs
     //----------------------------------------------------------------------------
 
+    AFF_TRACE("Flows loop exit, Init Textures + BaseSort enter");
     // Init Textures
     PtrMap = ObjPtrMap = BufferTexture;
     RepMask = 0xFFFF;
 
     if (BaseSort()) {
+        AFF_TRACE("BaseSort returned TRUE -> goto startaffscene");
         // NumObjFollow masqué on
         // doit redessiner la camera
         if (flagflip == AFF_ALL_FLIP OR flagflip == AFF_ALL_NO_FLIP) {
@@ -6112,6 +6415,17 @@ startaffscene:
         FlagPal = FALSE;
     }
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        static int s_palBranchLog = 0;
+        if (s_palBranchLog < 4) {
+            LogPrintf("[AffScene-pal] FlagFade=%d FlagLoadGame=%d FlagPal=%d FlagChgCube=%d changepal=%p PtrPal=%p\n",
+                      (int)FlagFade, (int)FlagLoadGame, (int)FlagPal, (int)FlagChgCube,
+                      (void*)changepal, (void*)PtrPal);
+            s_palBranchLog++;
+        }
+    }
+#endif
     if (FlagFade) {
         FadeToPalAndSamples(PtrPal);
         FlagFade = FALSE;
@@ -6142,6 +6456,12 @@ startaffscene:
     if (polyrec_pending_name[0]) {
         polyrec_stop();
     }
+#endif
+    AFF_TRACE("function exit");
+#ifdef LBA2_TARGET_WIIU
+    affscene_first_done = 1;
+    #undef AFF_TRACE
+    #undef AFF_TRACE_FMT
 #endif
 }
 /*══════════════════════════════════════════════════════════════════════════*

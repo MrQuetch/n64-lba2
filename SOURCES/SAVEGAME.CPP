@@ -1133,7 +1133,7 @@ S32 LoadContexte(S32 *savetimerrefhr) {
 
     if (wlong != Checksum) {
 #if defined(DEBUG_TOOLS) || defined(TEST_TOOLS)
-        Message("Warning: La sauvegarde ne correspond pas au scénario !", TRUE);
+        Message("Warning: La sauvegarde ne correspond pas au sc\x82nario !", TRUE);
 #endif
         SceneStartX = -1;
     }

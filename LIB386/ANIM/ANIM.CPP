@@ -4,6 +4,10 @@
 
 #include <SYSTEM/TIMER.H>
 #include <SYSTEM/DEBUG_TRACES.H>
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+#include <SYSTEM/LOGPRINT.H>
+#endif
 
 void ObjectInitAnim(T_OBJ_3D *obj, void *anim) {
     LIB386_TRACE_CPP("ObjectInitAnim", "1", "obj=%p anim=%p", (void *)obj, anim);
@@ -22,12 +26,15 @@ void ObjectInitAnim(T_OBJ_3D *obj, void *anim) {
 
     U16 *animPtr = (U16 *)anim;
 
-    U16 animNbFrames = animPtr[0];
-    U16 animNbGroups = animPtr[1];
-    U16 animLoopFrame = animPtr[2];
+    // Anim record header is little-endian on disk. Without swap, animNbGroups
+    // explodes and the currentFrame copy loop overruns into ListObjet[1+],
+    // clobbering PtrFile3D (manifests as 0x2c010000 garbage and SearchBody hang).
+    U16 animNbFrames = LBA2_LE16(animPtr[0]);
+    U16 animNbGroups = LBA2_LE16(animPtr[1]);
+    U16 animLoopFrame = LBA2_LE16(animPtr[2]);
 
     obj->Interpolator = 0;
-    obj->Master = animPtr[8];
+    obj->Master = LBA2_LE16(animPtr[8]);
     obj->NbFrames = animNbFrames;
     obj->NextNbGroups = animNbGroups;
     obj->LoopFrame = animLoopFrame;
@@ -58,20 +65,39 @@ void ObjectInitAnim(T_OBJ_3D *obj, void *anim) {
         U32 *srcAnim = (U32 *)animPtr + 4 + 2; // group 1?
         U32 count = animNbGroups * 2 - 2;
 
+#ifdef LBA2_TARGET_WIIU
+        // Anim frame data is LE on disk; the same per-S16 swap rationale
+        // as ObjectSetFrame applies here (T_GROUP_INFO {Type,A,B,G}).
+        {
+            U16 *srcS16 = (U16 *)srcAnim;
+            S16 *cfS16 = (S16 *)currentFrame;
+            U32 nS16 = count * 2u;
+            for (U32 i = 0; i < nS16; ++i) {
+                cfS16[i] = (S16)LBA2_LE16(srcS16[i]);
+            }
+            static int s_log = 0;
+            if (s_log < 2) {
+                LogPrintf("[ObjectInitAnim] swap-copied %u S16 to CurrentFrame; cf[0..3]=%d,%d,%d,%d\n",
+                          (unsigned)nS16, (int)cfS16[0], (int)cfS16[1], (int)cfS16[2], (int)cfS16[3]);
+                s_log++;
+            }
+        }
+#else
         for (int i = 0; i < count; i++) {
             currentFrame[i] = srcAnim[i];
         }
+#endif
         currentFrame += count;
         srcAnim += count;
 
         if (obj->NbFrames != 1) {
             obj->NextOfsFrame = (PTR_U32)((U64)srcAnim - (U64)animPtr);
             obj->NextFrame = 1;
-            obj->NextTimer = TimerRefHR + ((U16 *)srcAnim)[0];
+            obj->NextTimer = TimerRefHR + LBA2_LE16(((U16 *)srcAnim)[0]);
         } else {
             obj->NextOfsFrame = (PTR_U32)8;
             obj->NextFrame = 0;
-            obj->NextTimer = TimerRefHR + ((U16 *)animPtr)[4];
+            obj->NextTimer = TimerRefHR + LBA2_LE16(((U16 *)animPtr)[4]);
         }
 
         return;
@@ -96,7 +122,7 @@ void ObjectInitAnim(T_OBJ_3D *obj, void *anim) {
         }
     }
 
-    U16 animFrameDeltaTime = animPtr[4];
+    U16 animFrameDeltaTime = LBA2_LE16(animPtr[4]);
     obj->NextTimer = TimerRefHR + animFrameDeltaTime;
     obj->LastOfsFrame = (U32 *)PtrLib3DBufferAnim;
     obj->LastOfsIsPtr = 1;
@@ -125,9 +151,23 @@ void ObjectInitAnim(T_OBJ_3D *obj, void *anim) {
         U32 diff = obj->NbGroups - increasedToNbGroups;
         U32 *nextOfsFrame = (U32 *)((U8 *)anim + (U64)obj->NextOfsFrame) + (increasedToNbGroups + 1) * 8;
         U32 count = diff << 1;
+#ifdef LBA2_TARGET_WIIU
+        // This tail reads raw LE anim data (groups beyond the previous anim's
+        // count) while bufferAnim is consumed host-order by INTFRAME via
+        // LastOfsIsPtr==1 — same per-S16 swap as the CurrentFrame copy above.
+        {
+            U16 *srcS16 = (U16 *)nextOfsFrame;
+            S16 *dstS16 = (S16 *)bufferAnim;
+            U32 nS16 = count * 2u;
+            for (U32 i = 0; i < nS16; ++i) {
+                dstS16[i] = (S16)LBA2_LE16(srcS16[i]);
+            }
+        }
+#else
         for (int i = 0; i < count; i++) {
             bufferAnim[i] = nextOfsFrame[i];
         }
+#endif
 
         bufferAnim += count;
     }

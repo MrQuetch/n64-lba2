@@ -1,7 +1,23 @@
 #include "C_EXTERN.H"
+#include <SYSTEM/LOGPRINT.H>
 
 #include <SYSTEM/KEYBOARD_KEYS.H>
 #include <stdint.h>
+
+// Track bytecode operands are little-endian on disk AND the script is
+// self-modifying (TM_ANGLE / TM_FACE_TWINSEN / TM_ANGLE_RND write state back
+// into operand slots), so the bytecode is kept LE in memory and every 16-bit
+// operand access goes through these accessors. The inline U32 wait-timers
+// (TM_WAIT_NB_*) are runtime scratch — zeros on disk, host-order at runtime,
+// endian-neutral — and stay as raw accesses.
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+#define TRK_RD16(p) ((S16)LBA2_LE16(*(U16 *)(p)))
+#define TRK_WR16(p, v) (*(U16 *)(p) = LBA2_LE16((U16)(v)))
+#else
+#define TRK_RD16(p) (*(S16 *)(p))
+#define TRK_WR16(p, v) (*(S16 *)(p) = (S16)(v))
+#endif
 
 /*══════════════════════════════════════════════════════════════════════════*
 	  █▀▀▀▀ █▀▀▀▀ █▀▀▀█ █▀▀▀▀       ▀▀█▀▀ █▀▀▀█ █▀▀▀█ █▀▀▀▀ █  ▄▀
@@ -162,19 +178,19 @@ void DoTrack(U8 numobj) {
         switch (macro) {
             /*-------------------------------------------------------------------------*/
         case TM_SAMPLE:
-            HQ_3D_MixSample(*(S16 *)ptrtrack, 0x1000, 0, 1,
+            HQ_3D_MixSample(TRK_RD16(ptrtrack), 0x1000, 0, 1,
                             ptrobj->Obj.X, ptrobj->Obj.Y, ptrobj->Obj.Z);
             ptrobj->OffsetTrack += 2;
             break;
 
         case TM_SAMPLE_RND:
-            HQ_3D_MixSample(*(S16 *)ptrtrack, 0x800, 0x1000, 1,
+            HQ_3D_MixSample(TRK_RD16(ptrtrack), 0x800, 0x1000, 1,
                             ptrobj->Obj.X, ptrobj->Obj.Y, ptrobj->Obj.Z);
             ptrobj->OffsetTrack += 2;
             break;
 
         case TM_SAMPLE_ALWAYS: {
-            S32 num = *(S16 *)ptrtrack;
+            S32 num = TRK_RD16(ptrtrack);
 
             if (ptrobj->SampleAlways
                     AND((ptrobj->SampleAlways >> 8) & 0xFFFF) != num) {
@@ -199,7 +215,7 @@ void DoTrack(U8 numobj) {
         } break;
 
         case TM_SAMPLE_STOP: {
-            S32 num = *(S16 *)ptrtrack;
+            S32 num = TRK_RD16(ptrtrack);
 
             if (ptrobj->SampleAlways
                     AND((ptrobj->SampleAlways >> 8) & 0xFFFF) == num) {
@@ -212,12 +228,12 @@ void DoTrack(U8 numobj) {
         } break;
 
         case TM_REPEAT_SAMPLE:
-            BigSampleRepeat = *(S16 *)ptrtrack;
+            BigSampleRepeat = TRK_RD16(ptrtrack);
             ptrobj->OffsetTrack += 2;
             break;
 
         case TM_SIMPLE_SAMPLE:
-            HQ_MixSample(*(S16 *)ptrtrack, 0x1000, 0, BigSampleRepeat, 64, 127);
+            HQ_MixSample(TRK_RD16(ptrtrack), 0x1000, 0, BigSampleRepeat, 64, 127);
             BigSampleRepeat = 1;
             ptrobj->OffsetTrack += 2;
             break;
@@ -259,7 +275,7 @@ void DoTrack(U8 numobj) {
 
             /*-------------------------------------------------------------------------*/
         case TM_ANIM:
-            if (!InitAnim(*(U16 *)ptrtrack, ANIM_REPEAT, numobj)) {
+            if (!InitAnim((U16)TRK_RD16(ptrtrack), ANIM_REPEAT, numobj)) {
                 ptrobj->OffsetTrack = memooffsettrack;
                 flag = FALSE;
             } else {
@@ -478,7 +494,7 @@ void DoTrack(U8 numobj) {
             ptrobj->OffsetTrack += 2;
 
             if (!(ptrobj->Flags & SPRITE_3D)) {
-                Value = *(S16 *)ptrtrack;
+                Value = TRK_RD16(ptrtrack);
 
                 if (!(Value & 0x8000)) {
                     InitBoundAngleMove(&ptrobj->BoundAngle,
@@ -486,7 +502,7 @@ void DoTrack(U8 numobj) {
                                        ptrobj->Obj.Beta,
                                        Value);
 
-                    *(S16 *)ptrtrack |= 0x8000;
+                    TRK_WR16(ptrtrack, Value | 0x8000);
                 }
 
                 Value &= 0x7FFF;
@@ -500,7 +516,7 @@ void DoTrack(U8 numobj) {
                     flag = FALSE;
                 } else {
                     ptrobj->WorkFlags &= ~(TRACK_MASTER_ROT);
-                    *(S16 *)ptrtrack = (S16)Value;
+                    TRK_WR16(ptrtrack, Value);
                 }
             }
             break;
@@ -509,7 +525,7 @@ void DoTrack(U8 numobj) {
         case TM_FACE_TWINSEN:
             ptrobj->OffsetTrack += 2;
             if (!(ptrobj->Flags & SPRITE_3D)) {
-                Value = *(S16 *)ptrtrack;
+                Value = TRK_RD16(ptrtrack);
 
                 if (Value == -1) {
                     Value = GetAngle2D(ptrobj->Obj.X,
@@ -522,7 +538,7 @@ void DoTrack(U8 numobj) {
                                        ptrobj->Obj.Beta,
                                        Value);
 
-                    *(S16 *)ptrtrack = (S16)Value;
+                    TRK_WR16(ptrtrack, Value);
                 }
 
                 if (ptrobj->Obj.Beta != Value) {
@@ -534,7 +550,7 @@ void DoTrack(U8 numobj) {
                     flag = FALSE;
                 } else {
                     ptrobj->WorkFlags &= ~(TRACK_MASTER_ROT);
-                    *(S16 *)ptrtrack = -1;
+                    TRK_WR16(ptrtrack, -1);
                 }
             }
             break;
@@ -544,10 +560,10 @@ void DoTrack(U8 numobj) {
             ptrobj->OffsetTrack += 4;
 
             if (!(ptrobj->Flags & SPRITE_3D)) {
-                Value = *(S16 *)(ptrtrack + 2);
+                Value = TRK_RD16(ptrtrack + 2);
 
                 if (Value == -1) {
-                    Value = *(S16 *)ptrtrack;
+                    Value = TRK_RD16(ptrtrack);
                     if (rand() & 1) {
                         Value = (ptrobj->Obj.Beta + MyRnd(Value)) & (MAX_ANGLE - 1);
                     } else {
@@ -559,7 +575,7 @@ void DoTrack(U8 numobj) {
                                        ptrobj->Obj.Beta,
                                        Value);
 
-                    *(S16 *)(ptrtrack + 2) = (S16)Value;
+                    TRK_WR16(ptrtrack + 2, Value);
                 }
 
                 if (ptrobj->Obj.Beta != Value) {
@@ -571,7 +587,7 @@ void DoTrack(U8 numobj) {
                     flag = FALSE;
                 } else {
                     ptrobj->WorkFlags &= ~(TRACK_MASTER_ROT);
-                    *(S16 *)(ptrtrack + 2) = -1;
+                    TRK_WR16(ptrtrack + 2, -1);
                 }
             }
             break;
@@ -599,7 +615,7 @@ void DoTrack(U8 numobj) {
                     ptrobj->Obj.Beta = 0 * MUL_ANGLE;
                     break;
                 }
-                ptrobj->DoorWidth = *(S16 *)ptrtrack;
+                ptrobj->DoorWidth = TRK_RD16(ptrtrack);
                 ptrobj->WorkFlags |= AUTO_STOP_DOOR;
 
                 //speed porte
@@ -635,7 +651,7 @@ void DoTrack(U8 numobj) {
             /*-------------------------------------------------------------------------*/
         case TM_BETA:
             ptrobj->OffsetTrack += 2;
-            ptrobj->Obj.Beta = *(S16 *)ptrtrack;
+            ptrobj->Obj.Beta = TRK_RD16(ptrtrack);
             if (!(ptrobj->Flags & SPRITE_3D)) {
                 ClearRealAngle(ptrobj);
             }
@@ -686,13 +702,13 @@ void DoTrack(U8 numobj) {
 
             /*-------------------------------------------------------------------------*/
         case TM_GOTO:
-            ptrobj->OffsetTrack = *(S16 *)ptrtrack;
+            ptrobj->OffsetTrack = TRK_RD16(ptrtrack);
             break;
 
             /*-------------------------------------------------------------------------*/
         case TM_SPEED:
             ptrobj->OffsetTrack += 2;
-            ptrobj->SRot = *(S16 *)ptrtrack;
+            ptrobj->SRot = TRK_RD16(ptrtrack);
             if (ptrobj->Flags & SPRITE_3D) { /* voir pour les 2 types ? */
                 ChangeSpeedMove(&ptrobj->BoundAngle.Move, ptrobj->SRot);
             } else if (ptrobj->Move == MOVE_WAGON) {
@@ -752,7 +768,7 @@ void DoTrack(U8 numobj) {
 
             if (*ptrtrack > 0) {
                 ptrtrack++;
-                ptrobj->OffsetTrack = *(S16 *)ptrtrack;
+                ptrobj->OffsetTrack = TRK_RD16(ptrtrack);
             } else {
                 *ptrtrack = n;            // reinit compteur
                 ptrobj->OffsetTrack++;    // saute compteur
@@ -762,7 +778,7 @@ void DoTrack(U8 numobj) {
 
             /*-------------------------------------------------------------------------*/
         case TM_SPRITE:
-            angle = *(S16 *)ptrtrack; // angle = sprite
+            angle = TRK_RD16(ptrtrack); // angle = sprite
             ptrobj->OffsetTrack += 2;
             if (ptrobj->Flags & SPRITE_3D) {
                 InitSprite(angle, ptrobj);
@@ -833,6 +849,18 @@ void DoTrack(U8 numobj) {
             ptrobj->OffsetTrack++;
 
             if (ptrobj->Flags & ANIM_3DS) {
+#ifdef LBA2_TARGET_WIIU
+                {
+                    static int s_n = 0;
+                    if (s_n < 24) {
+                        s_n++;
+                        LogPrintf("[3ds] TM_START obj=%d Num=%d Deb=%d Fin=%d fps=%d\n",
+                                  (int)numobj, (int)ptrobj->Coord.A3DS.Num,
+                                  (int)ptrobj->Coord.A3DS.Deb,
+                                  (int)ptrobj->Coord.A3DS.Fin, (int)n);
+                    }
+                }
+#endif
                 InitSprite(ptrobj->Coord.A3DS.Deb, ptrobj);
                 ptrobj->SizeSHit = n;
                 ptrobj->PtrFile3D = (U8 *)(uintptr_t)(U32)TimerRefHR;
@@ -879,13 +907,13 @@ void DoTrack(U8 numobj) {
             /*-------------------------------------------------------------------------*/
         case TM_DECALAGE:
             ptrobj->OffsetTrack += 2;
-            ParmSampleDecalage = *(S16 *)ptrtrack;
+            ParmSampleDecalage = TRK_RD16(ptrtrack);
             break;
 
             /*-------------------------------------------------------------------------*/
         case TM_FREQUENCE:
             ptrobj->OffsetTrack += 2;
-            ParmSampleFrequence = *(S16 *)ptrtrack;
+            ParmSampleFrequence = TRK_RD16(ptrtrack);
             break;
 
             /*-------------------------------------------------------------------------*/

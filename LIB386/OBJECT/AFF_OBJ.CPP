@@ -18,6 +18,9 @@
 #include <string.h>
 #include <math.h>
 #include <SYSTEM/DEBUG_TRACES.H>
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/LOGPRINT.H>
+#endif
 
 #define MAX_NB_POINTS 550
 #define MAX_NB_POLYS 550
@@ -1352,16 +1355,33 @@ S32 EntityCreation(T_BODY_HEADER *body) {
     // @@Loop_Polys:
     while (currentPoly != lines) {
         T_POLY_HEADER *header = (T_POLY_HEADER *)currentPoly;
-        U32 mask = 0;
-        memcpy(&mask, header, sizeof(U32));
-        U8 typePoly = header->TypePoly & 0xFF;
+        // NOTE: original x86 used `memcpy(&mask, header, 4)` and then
+        // `mask & MASK_QUADRILATERE` (bit 15). That works on LE because
+        // `mask` = (NbPoly<<16) | TypePoly, so bit 15 is bit 15 of TypePoly.
+        // On big-endian PPC, after a U16 swap of TypePoly/NbPoly, the same
+        // memcpy yields mask = (TypePoly<<16) | NbPoly, putting bit 15 onto
+        // NbPoly — wrong dispatch, runaway InsertQuad/InsertTriangle iter,
+        // hang. Reading the U16 fields directly gives correct semantics on
+        // both ends.
+        U16 typeWord = header->TypePoly;
+        U8 typePoly = typeWord & 0xFF;
+#ifdef LBA2_TARGET_WIIU
+        {
+            static int s_polyLog = 0;
+            if (s_polyLog < 16) {
+                LogPrintf("[EntityCreation] poly_grp type=0x%04X nbPoly=%u\n",
+                          (unsigned)typeWord, (unsigned)header->NbPoly);
+                s_polyLog++;
+            }
+        }
+#endif
         currentPoly = (void *)((U8 *)currentPoly + sizeof(T_POLY_HEADER));
         bodyOffset += sizeof(T_POLY_HEADER);
 
         // *** Type dispatch ***
-        if (mask & MASK_QUADRILATERE) {
+        if (typeWord & MASK_QUADRILATERE) {
             // Dispatch a quad
-            if (mask & MASK_ENVIRONMENT) {
+            if (typeWord & MASK_ENVIRONMENT) {
                 InsertQuad(2, header, &currentPoly, &bodyOffset);
             } else if (typePoly <= POLY_DITHER_TABLE) {
                 InsertQuad(0, header, &currentPoly, &bodyOffset);
@@ -1370,7 +1390,7 @@ S32 EntityCreation(T_BODY_HEADER *body) {
             }
         }
         // Dispatch a triangle
-        else if (mask & MASK_ENVIRONMENT) {
+        else if (typeWord & MASK_ENVIRONMENT) {
             InsertTriangle(2, header, &currentPoly, &bodyOffset);
         } else if (typePoly <= POLY_DITHER_TABLE) {
             InsertTriangle(0, header, &currentPoly, &bodyOffset);
@@ -1484,8 +1504,16 @@ S32 EntityCreation(T_BODY_HEADER *body) {
     return 1;
 }
 
+#ifdef LBA2_TARGET_WIIU
+// (ObjectDisplay is not reentrant.)
+static T_OBJ_3D *wiiu_curObj = NULL;
+#endif
+
 S32 ObjectDisplay(T_OBJ_3D *obj) {
     LIB386_TRACE_CPP("ObjectDisplay", "1", "obj=%p", (void *)obj);
+#ifdef LBA2_TARGET_WIIU
+    wiiu_curObj = obj;
+#endif
     // Must we change the texture pointer ?
     if (obj->Texture != NULL && obj->Texture != (void *)-1) {
         ObjPtrMap = (U8 *)obj->Texture;
@@ -1553,6 +1581,27 @@ S32 ObjectDisplay(T_OBJ_3D *obj) {
     TransY = 0;
     TransZ = 0;
 
+#ifdef LBA2_TARGET_WIIU
+    // Ground truth for the body-Y bug: raw group table at display time. The
+    // group chain is only self-consistent if group[0].NbPts==2, yet we read
+    // 0 — dump header counts + first 3 descriptors verbatim to see whether
+    // the table is zeroed, shifted, or mis-swapped.
+    {
+        static int s_raw = 0;
+        if (s_raw < 3) {
+            U16 *g = (U16 *)PtrGroupes;
+            LogPrintf("[BodyRaw] body=%ld NbPts=%ld NbGrp=%ld OffGrp=%ld OffPts=%ld | g0=%04x,%04x,%04x,%04x g1=%04x,%04x,%04x,%04x g2=%04x,%04x,%04x,%04x",
+                      (long)obj->Body.Num, (long)lBody->NbPoints,
+                      (long)lBody->NbGroupes, (long)lBody->OffGroupes,
+                      (long)lBody->OffPoints,
+                      g[0], g[1], g[2], g[3],
+                      g[4], g[5], g[6], g[7],
+                      g[8], g[9], g[10], g[11]);
+            s_raw++;
+        }
+    }
+#endif
+
     RotateMatrix(Current_Matrix, &MatriceWorld,
                  obj->Alpha, obj->Beta, obj->Gamma);
 
@@ -1564,6 +1613,17 @@ S32 ObjectDisplay(T_OBJ_3D *obj) {
 
     U32 groupeNbPts = PtrGroupes->NbPts;
     U32 groupeNbNorm = PtrGroupes->NbNorm;
+
+#ifdef LBA2_TARGET_WIIU
+    {
+        static int s_log = 0;
+        if (s_log < 2) {
+            LogPrintf("[ObjDisp] body=%p NbGroupes=%d first NbPts=%u NbNorm=%u\n",
+                      body, (int)NbGroupes, (unsigned)groupeNbPts, (unsigned)groupeNbNorm);
+            s_log++;
+        }
+    }
+#endif
 
     RotTransList(Current_Matrix, PtrRotPoints, PtrPoints,
                  groupeNbPts);
@@ -1591,6 +1651,13 @@ S32 ObjectDisplay(T_OBJ_3D *obj) {
         PtrListLightsFaces = (PTR_U16)((U8 *)PtrListLightsFaces + groupeNbNorm * 2);
     }
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        static int s_log = 0;
+        if (s_log < 2) { LogPrintf("[ObjDisp] post first LightList, inner loop NbGroupes=%d\n", (int)NbGroupes); s_log++; }
+    }
+#endif
+
     while (--NbGroupes > 0) {
         PtrGroupes = PtrGroupes + 1;
         ListGroupAnim = ListGroupAnim + 1;
@@ -1604,6 +1671,21 @@ S32 ObjectDisplay(T_OBJ_3D *obj) {
         TransX = point->X;
         TransY = point->Y;
         TransZ = point->Z;
+
+#ifdef LBA2_TARGET_WIIU
+        // Body-Y diagnostic: which ingredient of the group translation blows
+        // past S16 — the parent rotated point (TransY) or the rotated anim
+        // offset (Y0)?
+        {
+            static int s_log = 0;
+            if ((TransY > 30000 || TransY < -30000) && s_log < 8) {
+                LogPrintf("[GrpLoop BIG] orgPoint=%ld TransY=%ld Y0=%ld type=%u",
+                          (long)orgPoint, (long)TransY, (long)Y0,
+                          (unsigned)ListGroupAnim->Type);
+                s_log++;
+            }
+        }
+#endif
 
         TYPE_MAT *mat = &TabMat[orgGroupe];
 
@@ -1654,6 +1736,13 @@ S32 ObjectDisplay(T_OBJ_3D *obj) {
             PtrNormFaces = (TYPE_VT16 *)((U8 *)PtrNormFaces + groupeNbNorm * 8);
             PtrListLightsFaces = (PTR_U16)((U8 *)PtrListLightsFaces + groupeNbNorm * 2);
         }
+
+#ifdef LBA2_TARGET_WIIU
+        {
+            static int s_log = 0;
+            if (s_log < 6) { LogPrintf("[ObjDisp inner] iter done remaining=%d\n", (int)NbGroupes - 1); s_log++; }
+        }
+#endif
     }
 
     // ******************
@@ -1663,9 +1752,32 @@ S32 ObjectDisplay(T_OBJ_3D *obj) {
     ProjectList(Obj_ListProjectedPoints, (TYPE_VT16 *)Obj_ListRotatedPoints,
                 lBody->NbPoints, -PosXWr, -PosYWr, -PosZWr);
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        static int s_log = 0;
+        if (s_log < 2) { LogPrintf("[ObjDisp] post ProjectList, entering EntityCreation\n"); s_log++; }
+    }
+#endif
     // Is the object visible?
     if (ScreenXMin > ClipXMax || ScreenYMin > ClipYMax ||
         ScreenXMax < ClipXMin || ScreenYMax < ClipYMin) {
+#ifdef LBA2_TARGET_WIIU
+        // Walk diagnostic: a legit off-screen cull has box values in screen
+        // range; a corrupted projection culls with absurd coordinates.
+        {
+            static int s_cull = 0;
+            if (s_cull < 8 &&
+                (ScreenXMin > 5000 || ScreenXMin < -5000 ||
+                 ScreenYMin > 5000 || ScreenYMin < -5000)) {
+                LogPrintf("[ObjDisp CULL] obj=%p box=(%ld,%ld)-(%ld,%ld) pos=%ld,%ld,%ld",
+                          (void *)wiiu_curObj,
+                          (long)ScreenXMin, (long)ScreenYMin,
+                          (long)ScreenXMax, (long)ScreenYMax,
+                          (long)PosXWr, (long)PosYWr, (long)PosZWr);
+                s_cull++;
+            }
+        }
+#endif
         return 0;
     }
 

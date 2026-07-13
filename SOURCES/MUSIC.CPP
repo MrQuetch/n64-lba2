@@ -2,6 +2,10 @@
 
 #include "DIRECTORIES.H"
 
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/LOGPRINT.H>
+#endif
+
 /*══════════════════════════════════════════════════════════════════════════*
 				  █▀▀▀▀ █▀▀▀▄
 				  ██    ██  █
@@ -107,6 +111,10 @@ S32 GetNumJingle(char *name) {
 /*──────────────────────────────────────────────────────────────────────────*/
 
 void PlayJingle(S32 num) {
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[MUSIC] PlayJingle num=%d (range %d..%d, JingleVolume=%d)\n",
+              (int)num, FIRST_JINGLE, LAST_JINGLE, (int)JingleVolume);
+#endif
     if (num >= FIRST_JINGLE AND num <= LAST_JINGLE AND JingleVolume > 0) {
         LockTimer();
 
@@ -120,6 +128,10 @@ void PlayJingle(S32 num) {
         GetJinglePath(jinglePath, ADELINE_MAX_PATH, jingleFilename);
 
         const bool playingTheSame = (strcasecmp(jinglePath, StreamName()) == 0);
+#ifdef LBA2_TARGET_WIIU
+        LogPrintf("[MUSIC] PlayJingle file='%s' path='%s' playingTheSame=%d\n",
+                  jingleFilename, jinglePath, (int)playingTheSame);
+#endif
         if (!playingTheSame) {
             PlayStream(jinglePath);
         }
@@ -244,6 +256,15 @@ void PlayMusic(S32 num, S32 playit) {
         else
             cur = GetMusic();
 
+#ifdef LBA2_TARGET_WIIU
+        // playit=TRUE → LIFE script (LM_PLAY_MUSIC); FALSE → MainLoop CubeJingle
+        // or CheckNextMusic requeue. entry: JINGLE bit 0x80 routes to PlayJingle,
+        // otherwise PlayCD.
+        LogPrintf("[MUSIC] PlayMusic num=%d playit=%d entry=0x%02X cur=%d StopLast=%d CDVolume=%d\n",
+                  (int)num, (int)playit, (unsigned)PtrTrackCD[num], (int)cur,
+                  (int)StopLastMusic, (int)CDVolume);
+#endif
+
         StopLastMusic = playit;
 
         if (cur == 0) {
@@ -268,6 +289,10 @@ void PlayMusic(S32 num, S32 playit) {
             {
                 NextMusic = num; // empile musique à jouer +tard
                                  //				NextMusicTimer = TimerRefHR+TEST_MUSIC_TEMPO ;
+#ifdef LBA2_TARGET_WIIU
+                LogPrintf("[MUSIC] PlayMusic queued NextMusic=%d (cur=%d busy)\n",
+                          (int)NextMusic, (int)cur);
+#endif
             }
         }
 

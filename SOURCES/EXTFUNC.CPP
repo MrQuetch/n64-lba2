@@ -15,7 +15,16 @@
 
 #include <SVGA/SCREEN.H>
 #include <SYSTEM/KEYBOARD_KEYS.H>
+#include <SYSTEM/LOGPRINT.H>
 #include "FOLLOWCAM_CFG.H"
+
+#ifdef LBA2_TARGET_WIIU
+#  define WIIU_TRACE(s) LogPrintf("[trace] " s)
+#  define WIIU_TRACE_FMT(...) LogPrintf(__VA_ARGS__)
+#else
+#  define WIIU_TRACE(s) ((void)0)
+#  define WIIU_TRACE_FMT(...) ((void)0)
+#endif
 
 extern S32 Nxw, Nyw, Nzw;
 extern S32 SaveNxw, SaveNzw;
@@ -262,30 +271,48 @@ void InitGrilleExt(U32 numcube) {
         numskysea = RESS_SKYSEA0 + Island;
     }
 
+    WIIU_TRACE_FMT("[trace] InitGrilleExt: Island=%d numskysea=%d IslandName='%s' NumCube=%d LastIsland=%d\n",
+                   Island, numskysea, IslandName, NumCube, LastIsland);
+
     if (NumCube != NUM_CUBE_PHANTOM) {
         if (LastIsland != Island) {
+            WIIU_TRACE("InitGrilleExt: Load_HQR(SkySeaTexture, numskysea) enter");
             GetResPath(tmpFilePath, ADELINE_MAX_PATH, RESS_HQR_NAME);
             Load_HQR(tmpFilePath, SkySeaTexture, numskysea);
+            WIIU_TRACE("InitGrilleExt: Load_HQR(SkySeaTexture) exit");
 
+            WIIU_TRACE("InitGrilleExt: LoadIsland enter");
             LoadIsland();
+            WIIU_TRACE("InitGrilleExt: LoadIsland exit");
             LastIsland = Island;
         }
 
+        WIIU_TRACE("InitGrilleExt: ManageSystem #A enter");
         ManageSystem(); // for streaming
+        WIIU_TRACE("InitGrilleExt: ManageSystem #A exit");
 
+        WIIU_TRACE_FMT("[trace] InitGrilleExt: LoadCube(%d,%d) enter\n", CurrentCubeX, CurrentCubeY);
         LoadCube(CurrentCubeX, CurrentCubeY);
+        WIIU_TRACE("InitGrilleExt: LoadCube exit");
 
+        WIIU_TRACE("InitGrilleExt: ManageSystem #B enter");
         ManageSystem(); // for streaming
+        WIIU_TRACE("InitGrilleExt: ManageSystem #B exit");
 
+        WIIU_TRACE("InitGrilleExt: FixeObjetsDecorsInvisibles enter");
         FixeObjetsDecorsInvisibles();
+        WIIU_TRACE("InitGrilleExt: FixeObjetsDecorsInvisibles exit");
     } else {
 #ifdef DEMO
         // Grosse rustine pour ne pas voir les plaques d'égouts
         ListVarGame[164] = 1;
         ListVarGame[165] = 1;
 #endif
+        WIIU_TRACE("InitGrilleExt: InitSeaCube enter");
         InitSeaCube();
+        WIIU_TRACE("InitGrilleExt: InitSeaCube exit");
     }
+    WIIU_TRACE("InitGrilleExt: end");
 }
 #endif
 
@@ -2457,7 +2484,7 @@ void MenuCreateExtZones() {
     BackupScreen(TRUE);
 
     OpenMenu(&menu, 15, 9);
-    AddText(&menu, 0, 0, 15, 1, FLAG_CENTRE + FLAG_CONTOUR, "Création des zones");
+    AddText(&menu, 0, 0, 15, 1, FLAG_CENTRE + FLAG_CONTOUR, "Cr\x82" "ation des zones");
     AddButton(&menu, 98, 0, 1, 1, 1, NO_FLAG, "■");
 
     AddSwitch(&menu, 1, 0, 1, 15, 1, FLAG_CENTRE, "ZONE NORD", &zones, CREATE_ZONE_NORD);

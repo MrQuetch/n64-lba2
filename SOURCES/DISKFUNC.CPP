@@ -2,6 +2,11 @@
 #include "DIRECTORIES.H"
 
 #include <SYSTEM/ADELINE.H>
+#include <SYSTEM/LOGPRINT.H>
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+extern "C" void WiiU_PtrFile3DCanary(const char *where);
+#endif
 
 #include <errno.h>
 
@@ -10,13 +15,21 @@ U8 *PtrScene;
 S32 CubeMode = 0;     // 0-->Intérieur - 1-->Extérieur
 S32 LastCubeMode = 0; // 0-->Intérieur - 1-->Extérieur
 
+// Scene/cube data on disk is LE (x86 retail). On PPC (Wii U) every multi-byte
+// GET_* must byte-swap on read or the parser misaligns and NbObjets/CubeStartX
+// etc come out as garbage. Single-byte GET_S8 is endian-agnostic.
 #define GET_S8 (*PtrSce++)
+#ifdef LBA2_TARGET_WIIU
+#define GET_S16 ((S16)LBA2_LE16(*(U16 *)PtrSce)); PtrSce += 2
+#define GET_U32 (LBA2_LE32(*(U32 *)PtrSce));      PtrSce += 4
+#else
 #define GET_S16       \
     (*(S16 *)PtrSce); \
     PtrSce += 2
 #define GET_U32       \
     (*(U32 *)PtrSce); \
     PtrSce += 4
+#endif
 
 /*══════════════════════════════════════════════════════════════════════════*
 	     █▀▀▀▄  █    ██▀▀▀ █  ▄▀       █▀▀▀▀ █   █ ██▄ █ █▀▀▀▀
@@ -145,6 +158,9 @@ S32 LoadScene(S32 numscene) {
     // objets: OBJECT
 
     NbObjets = GET_S16;
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[LoadScene] NbObjets=%d BufferFile3D=%p\n", (int)NbObjets, (void*)BufferFile3D);
+#endif
     for (n = 1; n < NbObjets; n++, ptrobj++) {
         InitObject(n);
 
@@ -152,12 +168,30 @@ S32 LoadScene(S32 numscene) {
 
         indexfile3d = GET_S16;
 
+#ifdef LBA2_TARGET_WIIU
+        if (n <= 16) {
+            LogPrintf("[LoadScene obj %d] Flags=0x%08X indexfile3d=%d sprite3d=%d\n",
+                      (int)n, (unsigned)ptrobj->Flags, (int)indexfile3d,
+                      (int)((ptrobj->Flags & SPRITE_3D) ? 1 : 0));
+        }
+#endif
+
         if (!(ptrobj->Flags & SPRITE_3D)) {
             if (!FlagLoadGame) {
                 ptrobj->PtrFile3D = LoadFile3D(indexfile3d);
             }
 
             ptrobj->IndexFile3D = indexfile3d;
+
+#ifdef LBA2_TARGET_WIIU
+            if (n <= 16 && ptrobj->PtrFile3D != NULL) {
+                U8 *p = ptrobj->PtrFile3D;
+                LogPrintf("[LoadScene obj %d] PtrFile3D=%p first16=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                          (int)n, (void*)p,
+                          p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
+                          p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15]);
+            }
+#endif
         }
 
         ManageSystem(); // for streaming
@@ -228,6 +262,29 @@ S32 LoadScene(S32 numscene) {
     ListZone = (T_ZONE *)PtrSce;
     PtrSce += NbZones * sizeof(T_ZONE);
 
+#ifdef LBA2_TARGET_WIIU
+    // T_ZONE = 14x S32 (X0..Z1 bbox + Info0..7) + 2x S16 (Type, Num), used as
+    // a raw overlay on the LE scene buffer. Left unswapped no zone ever fires:
+    // Type garbage skips every case in the switch below and in GereZone, and
+    // the bbox test never contains the hero — so ACTION in normal behavior
+    // (zone giver/message), change-cube, camera and GRM zones all go dead.
+    {
+        U32 *zp = (U32 *)ListZone;
+        S32 zi;
+
+        for (zi = 0; zi < NbZones; zi++, zp += sizeof(T_ZONE) / 4) {
+            U16 *zs = (U16 *)(zp + 14);
+            S32 k;
+
+            for (k = 0; k < 14; k++) // X0..Info7
+                zp[k] = LBA2_LE32(zp[k]);
+
+            zs[0] = LBA2_LE16(zs[0]); // Type
+            zs[1] = LBA2_LE16(zs[1]); // Num
+        }
+    }
+#endif
+
     ptrz = ListZone;
 
     for (n = 0; n < NbZones; n++, ptrz++) {
@@ -275,10 +332,35 @@ S32 LoadScene(S32 numscene) {
     NbBrickTrack = GET_S16;
     ListBrickTrack = (T_TRACK *)PtrSce;
     PtrSce += NbBrickTrack * sizeof(T_TRACK);
+#ifdef LBA2_TARGET_WIIU
+    // T_TRACK = {S32 X, S32 Y, S32 Z} per entry, all LE on disk. Without this
+    // swap LM_POS_POINT (opcode 0x3A) in DoLife writes garbage S32 values into
+    // Twinsen.Obj.X/Y/Z on the first iter — confirmed via per-opcode trace.
+    {
+        S32 *p = (S32 *)ListBrickTrack;
+        for (S32 i = 0; i < NbBrickTrack; ++i) {
+            p[i*3 + 0] = LBA2_LE32(p[i*3 + 0]);
+            p[i*3 + 1] = LBA2_LE32(p[i*3 + 1]);
+            p[i*3 + 2] = LBA2_LE32(p[i*3 + 2]);
+        }
+    }
+#endif
 
     //--------- PATCHES ----------
     NbPatches = GET_U32;
     ListPatches = (T_PATCH *)PtrSce;
+#ifdef LBA2_TARGET_WIIU
+    // T_PATCH = {S16 Size, S16 Offset}, raw LE overlay. The save-game writer
+    // walks these and reads PtrScene + Offset for Size bytes — byte-swapped
+    // garbage there means a wild read/copy (the "save crashes" symptom).
+    {
+        U16 *pp = (U16 *)ListPatches;
+        S32 pi;
+
+        for (pi = 0; pi < NbPatches * 2; pi++)
+            pp[pi] = LBA2_LE16(pp[pi]);
+    }
+#endif
     //----------------------------
 
     if (NumCube == NUM_CUBE_PHANTOM) {
@@ -293,8 +375,16 @@ S32 LoadScene(S32 numscene) {
 
     //		FlagFade = TRUE ;
 
+#ifdef LBA2_TARGET_WIIU
+    WiiU_PtrFile3DCanary("LoadScene before PtrInit3DGame");
+#endif
+
     // Init suivant type de cube
     PtrInit3DGame();
+
+#ifdef LBA2_TARGET_WIIU
+    WiiU_PtrFile3DCanary("LoadScene after PtrInit3DGame, before return");
+#endif
 
     return TRUE;
 }
@@ -357,27 +447,35 @@ U8 AddDirIfNot(const char *path) {
         }
     }
 
-    int status = 0;
+    // Create each missing component in turn. An intermediate mkdir failure
+    // is NOT conclusive: on Wii U the leading components are virtual mounts
+    // (mkdir("/vol") fails with an errno that is not EEXIST — the old
+    // status/errno chain broke there and the final directory was never
+    // created, so game saves silently failed to persist). What matters is
+    // whether each component exists, and whether the full path is a
+    // directory at the end.
     char *pp = copypath;
     char *sp;
-    while ((status == 0 || errno == EEXIST) &&
-           ((sp = strchr(pp, ADELINE_PATH_SEP_CHAR)) != NULL)) {
+    while ((sp = strchr(pp, ADELINE_PATH_SEP_CHAR)) != NULL) {
         if (sp != pp) {
             *sp = '\0';
-            status = ADELINE_MKDIR(copypath);
+            if (!ExistsFileOrDir(copypath)) {
+                ADELINE_MKDIR(copypath);
+            }
             *sp = ADELINE_PATH_SEP_CHAR;
         }
         pp = sp + 1;
     }
 
-    if (status == 0 || errno == EEXIST) {
-        errno = 0;
-        status = ADELINE_MKDIR(path);
+    if (!ExistsFileOrDir(copypath)) {
+        ADELINE_MKDIR(copypath);
     }
+
+    U8 ok = (U8)(ExistsFileOrDir(copypath) AND IsDirectory(copypath));
 
     free(copypath);
 
-    return (status == 0);
+    return ok;
 }
 
 /*──────────────────────────────────────────────────────────────────────────*/
@@ -391,7 +489,9 @@ void CreateLbaDirectories(void) {
 #endif
 
     GetSavePath(tmpDirPath, ADELINE_MAX_PATH, NULL);
-    AddDirIfNot(tmpDirPath);
+    if (!AddDirIfNot(tmpDirPath)) {
+        LogPrintf("Warning: could not create save dir '%s'\n", tmpDirPath);
+    }
 
     GetShootPath(tmpDirPath, ADELINE_MAX_PATH, NULL);
     AddDirIfNot(tmpDirPath);

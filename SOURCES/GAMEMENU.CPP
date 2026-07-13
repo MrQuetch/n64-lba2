@@ -4,6 +4,13 @@
 #include "INPUT.H"
 #include "JOYSTICK.H"
 #include "CONSOLE/CONSOLE.H"
+#include <SYSTEM/LOGPRINT.H>
+
+#ifdef LBA2_TARGET_WIIU
+#  define WIIU_TRACE(s) LogPrintf("[trace] " s)
+#else
+#  define WIIU_TRACE(s) ((void)0)
+#endif
 
 #include <SVGA/SCREEN.H>
 #include <SVGA/VIDEO.H>
@@ -285,6 +292,12 @@ enum MenuLocalizedLabel {
     MENU_LABEL_COUNT,
 };
 
+// NOTE: the GPM font (RESS_FONT_GPM) indexes glyphs by single CP850/DOS
+// bytes (é=\x82, ô=\x93, á=\xA0, ç=\x87, â=\x83, ã=\xC6, õ=\xE4), same
+// encoding as the TEXT.HQR dialogue banks. Accented characters here MUST be
+// CP850 escapes, not UTF-8 source text: each UTF-8 byte pair renders as two
+// junk glyphs ("Contr??les"). Escapes are split ("avanc\x82" "es") whenever
+// the next character is a hex digit, or C would swallow it into the escape.
 static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
     {
         "Choose language",
@@ -300,14 +313,14 @@ static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
     },
     {
         "Choix de la langue",
-        "Options avancées",
+        "Options avanc\x82" "es",
         "Textes : %s",
         "Voix : %s",
-        "Affichage plein écran : OFF",
-        "Affichage plein écran : ON",
-        "Caméra automatique",
-        "Caméra classique",
-        "Contrôles",
+        "Affichage plein \x82" "cran : OFF",
+        "Affichage plein \x82" "cran : ON",
+        "Cam\x82ra automatique",
+        "Cam\x82ra classique",
+        "Contr\x93les",
         "Configuration manette",
     },
     {
@@ -329,8 +342,8 @@ static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
         "Voces: %s",
         "Pantalla completa: OFF",
         "Pantalla completa: ON",
-        "Cámara automática",
-        "Cámara clásica",
+        "C\xA0mara autom\xA0tica",
+        "C\xA0mara cl\xA0sica",
         "Controles",
         "Configurar mando",
     },
@@ -348,13 +361,13 @@ static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
     },
     {
         "Escolha do idioma",
-        "Opções avançadas",
+        "Op\x87\xE4" "es avan\x87" "adas",
         "Texto: %s",
         "Voz: %s",
-        "Exibição em tela cheia: OFF",
-        "Exibição em tela cheia: ON",
-        "Câmera automática",
-        "Câmera clássica",
+        "Exibi\x87\xC6o em tela cheia: OFF",
+        "Exibi\x87\xC6o em tela cheia: ON",
+        "C\x83mera autom\xA0tica",
+        "C\x83mera cl\xA0ssica",
         "Controles",
         "Configurar gamepad",
     },
@@ -1008,8 +1021,119 @@ static S32 GameMenuSaveListHitTest(U32 mx, U32 my, S32 nb, S32 start, S32 *outSe
     return 0;
 }
 
-// TODO(gamepad): uses GetAscii() (keyboard-only) — pure-gamepad users cannot enter
-// save/profile names. Needs an on-screen D-pad character grid to close the gap.
+#ifdef LBA2_TARGET_WIIU
+/*──────────────────────────────────────────────────────────────────────────*/
+// On-screen keyboard for pad-only name entry (save names). Drawn with the
+// game's own menu primitives (Font/DrawCadre/ShadeBoxBlk) so it works
+// identically in Cemu and on hardware — no GX2/swkbd dependency. Events are
+// SYNTHESIZED as GetAscii() codes and fed to InputPlayerName's existing
+// state machine: A = insert selected char, B = A_BACKSPACE, Y = space,
+// + (START) = A_RETURN (confirm), - (SELECT) = A_ESC (cancel).
+
+#define OSK_ROWS 4
+#define OSK_COLS 10
+#define OSK_CELL_W 26
+#define OSK_CELL_H 24
+#define OSK_W (OSK_COLS * OSK_CELL_W)
+#define OSK_H (OSK_ROWS * OSK_CELL_H)
+
+static const char kOskGrid[OSK_ROWS][OSK_COLS + 1] = {
+    "ABCDEFGHIJ",
+    "KLMNOPQRST",
+    "UVWXYZ0123",
+    "456789 .-'",
+};
+
+static S32 OskRow = 0, OskCol = 0;
+static S32 OskPrevDir = 0;
+static S32 OskY0 = 300;
+
+static void WiiU_OskBegin(S32 nameY) {
+    OskRow = OskCol = 0;
+    OskPrevDir = JoystickMenuNavOnly();
+    // Keep the panel clear of the line being edited.
+    OskY0 = (nameY >= 280) ? 64 : 300;
+}
+
+static void WiiU_OskDraw(void) {
+    S32 x0 = 320 - OSK_W / 2 - 12;
+    S32 y0 = OskY0;
+    S32 x1 = 320 + OSK_W / 2 + 12;
+    S32 y1 = OskY0 + OSK_H + 36;
+    S32 r, c;
+    char s[2];
+
+    BackupAngles(x0, y0, x1, y1);
+    CopyBlock(x0, y0, x1, y1, Screen, x0, y0, Log);
+    ShadeBoxBlk(x0, y0, x1, y1, MENU_SHADE_LVL);
+    DrawCadre(x0, y0, x1, y1, ALL_ANGLES);
+    RestoreAngles(x0, y0, x1, y1);
+
+    s[1] = '\0';
+    for (r = 0; r < OSK_ROWS; r++) {
+        for (c = 0; c < OSK_COLS; c++) {
+            S32 cx = 320 - OSK_W / 2 + c * OSK_CELL_W + OSK_CELL_W / 2;
+            S32 cy = y0 + 8 + r * OSK_CELL_H;
+
+            s[0] = (kOskGrid[r][c] == ' ') ? '_' : kOskGrid[r][c];
+
+            if (r == OskRow AND c == OskCol) {
+                DrawCadre(cx - OSK_CELL_W / 2 + 2, cy - 2,
+                          cx + OSK_CELL_W / 2 - 2, cy + OSK_CELL_H - 6,
+                          ALL_ANGLES);
+            }
+            ColorFont(CoulTextMenu);
+            Font(cx - SizeFont(s) / 2, cy, s);
+        }
+    }
+
+    {
+        static char hint[] = "A:ok  B:canc  Y:spazio  +:conferma  -:annulla";
+        ColorFont(CoulTextMenu);
+        Font(320 - SizeFont(hint) / 2, y0 + OSK_H + 14, hint);
+    }
+
+    BoxStaticAdd(x0, y0, x1, y1);
+}
+
+static S32 WiiU_OskPoll(void) {
+    S32 dir;
+    U32 btn;
+
+    UpdateJoystick();
+
+    dir = JoystickMenuNavOnly();
+    if (dir != OskPrevDir) {
+        OskPrevDir = dir;
+        if (dir == K_UP)
+            OskRow = (OskRow + OSK_ROWS - 1) % OSK_ROWS;
+        else if (dir == K_DOWN)
+            OskRow = (OskRow + 1) % OSK_ROWS;
+        else if (dir == K_LEFT)
+            OskCol = (OskCol + OSK_COLS - 1) % OSK_COLS;
+        else if (dir == K_RIGHT)
+            OskCol = (OskCol + 1) % OSK_COLS;
+    }
+
+    btn = JoystickFirstPressedScancode();
+    switch (btn) {
+    case K_GAMEPAD_A:
+        return (S32)(U8)kOskGrid[OskRow][OskCol];
+    case K_GAMEPAD_B:
+        return A_BACKSPACE;
+    case K_GAMEPAD_Y:
+        return ' ';
+    case K_GAMEPAD_START:
+        return A_RETURN;
+    case K_GAMEPAD_BACK:
+        return A_ESC;
+    }
+    return 0;
+}
+#endif // LBA2_TARGET_WIIU
+
+// Keyboard path uses GetAscii(); on Wii U the on-screen keyboard above
+// synthesizes the same codes so pad-only users can enter names too.
 S32 InputPlayerName(S32 choice, char *name) {
     char memoplayername[255];
     S32 flag = 1;
@@ -1045,6 +1169,10 @@ S32 InputPlayerName(S32 choice, char *name) {
     x = 320;
     y = Y_START_CHOICE + choice * 60;
 
+#ifdef LBA2_TARGET_WIIU
+    WiiU_OskBegin(y);
+#endif
+
     ManageTime();
     timeraff = TimerRefHR + 20 * 20;
     CursorActif = TRUE;
@@ -1074,6 +1202,9 @@ S32 InputPlayerName(S32 choice, char *name) {
         }
 
         DrawOneString(320, y, PlayerName, 1);
+#ifdef LBA2_TARGET_WIIU
+        WiiU_OskDraw();
+#endif
         BoxUpdate();
 
         if (flag == 1) {
@@ -1083,6 +1214,10 @@ S32 InputPlayerName(S32 choice, char *name) {
 
         do {
             akey = GetAscii();
+#ifdef LBA2_TARGET_WIIU
+            if (!akey)
+                akey = WiiU_OskPoll();
+#endif
 
             if (!IsValidChar(akey))
                 akey = 0;
@@ -3087,10 +3222,14 @@ S32 MainGameMenu(S32 load) {
     char tmpFilePathSave[ADELINE_MAX_PATH];
     char tmpFilePathScreen[ADELINE_MAX_PATH];
 
+    WIIU_TRACE("MGM: HQ_StopSample/StopMusic enter");
     HQ_StopSample();
     StopMusic(); // Pour Stopper la music du Logo
+    WIIU_TRACE("MGM: HQ_StopSample/StopMusic exit");
 
+    WIIU_TRACE("MGM: InitPlasmaMenu enter");
     InitPlasmaMenu();
+    WIIU_TRACE("MGM: InitPlasmaMenu exit");
     FlagShadeMenu = FALSE;
 
 #ifdef DEMO
@@ -3108,10 +3247,13 @@ S32 MainGameMenu(S32 load) {
         goto load_game;
     }
 #else
+    WIIU_TRACE("MGM: IsFirstGameLaunched check enter");
     if (IsFirstGameLaunched()) {
+        WIIU_TRACE("MGM: IsFirstGameLaunched -> TRUE, goto new_game");
         FlagPlayAcf = TRUE;
         goto new_game;
     }
+    WIIU_TRACE("MGM: IsFirstGameLaunched -> FALSE");
 #endif
 
 #ifndef DEMO
@@ -3119,8 +3261,10 @@ S32 MainGameMenu(S32 load) {
         goto load_game;
 #endif
 
+    WIIU_TRACE("MGM: Load_HQR(SCREEN,Screen,PCR_MENU) enter");
     GetResPath(tmpFilePathScreen, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
     Load_HQR(tmpFilePathScreen, Screen, PCR_MENU);
+    WIIU_TRACE("MGM: Load_HQR(PCR_MENU) exit");
     CopyScreen(Screen, Log);
     BoxStaticFullflip();
     FadeToPal(PtrPalNormal);
@@ -3130,21 +3274,31 @@ S32 MainGameMenu(S32 load) {
     BackupScreen(FALSE);
     CopyScreen(Log, Screen);
 
+    WIIU_TRACE("MGM: MenuMouseAcquire enter");
     MenuMouseAcquire();
+    WIIU_TRACE("MGM: MenuMouseAcquire exit, entering while(!flag) loop");
 
     while (!flag) {
+        WIIU_TRACE("MGM while(!flag) iteration top");
         if (gogame) {
+            WIIU_TRACE("MGM gogame=TRUE branch enter");
             DemoSlide = FALSE;
             GameInProgress = FALSE;
 
+            WIIU_TRACE("MGM ClearPlasmaMenu enter");
             ClearPlasmaMenu(); // vire plasma menu
+            WIIU_TRACE("MGM ClearPlasmaMenu exit");
 
             FlagShadeMenu = TRUE;
 
             /* Menu mouse is for menu UI only; do not composite it during MainLoop (gameplay). */
+            WIIU_TRACE("MGM MenuMouseRelease enter");
             MenuMouseRelease();
+            WIIU_TRACE("MGM MenuMouseRelease exit");
 
+            WIIU_TRACE("MGM MainLoop enter");
             ret = MainLoop();
+            WIIU_TRACE("MGM MainLoop exit");
 
             BackupScreen(FALSE);
 
@@ -3322,17 +3476,25 @@ S32 MainGameMenu(S32 load) {
             goto load_game;
 #else
         new_game:
+            WIIU_TRACE("MGM new_game: enter");
             firstloop = FALSE;
             strcpy(PlayerName, "");
             PtrPal = PtrPalNormal;
+            WIIU_TRACE("MGM new_game: StopMusic enter");
             StopMusic();
+            WIIU_TRACE("MGM new_game: StopMusic exit");
+            WIIU_TRACE("MGM new_game: InitGame(1) enter");
             InitGame(1);
+            WIIU_TRACE("MGM new_game: InitGame(1) exit");
+            WIIU_TRACE("MGM new_game: Introduction enter");
             Introduction();
+            WIIU_TRACE("MGM new_game: Introduction exit");
             HQ_StopSample();
             HQ_ResumeSamples();
             FlagFade = TRUE;
             gogame = TRUE;
             EscTimer = 0;
+            WIIU_TRACE("MGM new_game: break to while(!flag)");
             break;
 #endif
 

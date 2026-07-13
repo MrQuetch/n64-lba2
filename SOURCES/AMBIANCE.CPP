@@ -4,6 +4,10 @@
 #include <SVGA/DIRTYBOX.H>
 #include <SVGA/SCREEN.H>
 #include <SVGA/VIDEO.H>
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/LOGPRINT.H>
+#include <SYSTEM/wiiu_endian.h>
+#endif
 
 #define BCL_FADE 50
 #define FADE_DELAY 200
@@ -456,11 +460,41 @@ void ChoicePalette(void) {
 
     PtrXplHeader = (XPL_HEADER *)PtrXplPalette;
 
+#ifdef LBA2_TARGET_WIIU
+    // XPL_HEADER is an array of S32 fields straight from disk (RESS_XPL*).
+    // The retail files are LE; on PPC every offset/setting comes out byte-
+    // swapped. Without this swap PtrPalCurrent ends up pointing far outside
+    // the loaded buffer (effectively at zeroed memory), so every cube
+    // palette becomes "all black" and FadeToPalAndSamples uploads a black
+    // LUT to OSScreen.
+    {
+        S32 offPal   = (S32)LBA2_LE32((U32)PtrXplHeader->OffsetPalette);
+        S32 offFog   = (S32)LBA2_LE32((U32)PtrXplHeader->OffsetFog);
+        S32 offTrans = (S32)LBA2_LE32((U32)PtrXplHeader->OffsetTransp);
+        S32 fogCoul  = (S32)LBA2_LE32((U32)PtrXplHeader->FogCoul);
+        S32 shadeLvl = (S32)LBA2_LE32((U32)PtrXplHeader->ShadeNormalLevel);
+
+        static int s_log = 0;
+        if (s_log < 3) {
+            LogPrintf("[ChoicePalette] XplHeader=%p offPal=%d offFog=%d offTrans=%d FogCoul=%d ShadeLvl=%d\n",
+                      (void *)PtrXplPalette, (int)offPal, (int)offFog,
+                      (int)offTrans, (int)fogCoul, (int)shadeLvl);
+            s_log++;
+        }
+
+        PtrPalCurrent = PtrXplPalette + offPal;
+        PtrNuances = PtrXplPalette + offFog;
+        PtrTransPal = PtrXplPalette + offTrans;
+        FogCoul = fogCoul;
+        PalLevel = shadeLvl;
+    }
+#else
     PtrPalCurrent = PtrXplPalette + PtrXplHeader->OffsetPalette;
     PtrNuances = PtrXplPalette + PtrXplHeader->OffsetFog;
     PtrTransPal = PtrXplPalette + PtrXplHeader->OffsetTransp;
     FogCoul = PtrXplHeader->FogCoul;
     PalLevel = PtrXplHeader->ShadeNormalLevel;
+#endif
 
     // Fixe Palette
     if (CubeMode == CUBE_INTERIEUR OR TEMPETE_FINIE) {
@@ -646,10 +680,46 @@ void FadeToPalAndSamples(U8 *ptrpal) {
         HQ_StopOneSample(SAMPLE_RAIN);
     }
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        static int s_log = 0;
+        if (s_log < 3) {
+            LogPrintf("[FadeToPalAndSamples] enter ptrpal=%p [0..8]=%02X%02X%02X %02X%02X%02X %02X%02X%02X [B7*3]=%02X%02X%02X FADE_DELAY=%d\n",
+                      (void *)ptrpal,
+                      (unsigned)ptrpal[0], (unsigned)ptrpal[1], (unsigned)ptrpal[2],
+                      (unsigned)ptrpal[3], (unsigned)ptrpal[4], (unsigned)ptrpal[5],
+                      (unsigned)ptrpal[6], (unsigned)ptrpal[7], (unsigned)ptrpal[8],
+                      (unsigned)ptrpal[0xB7*3+0], (unsigned)ptrpal[0xB7*3+1], (unsigned)ptrpal[0xB7*3+2],
+                      (int)FADE_DELAY);
+            s_log++;
+        }
+    }
+    int fadeIter = 0;
+#endif
     do {
         delta = FadeInSamples(FADE_DELAY);
         FadePal(0, 0, 0, ptrpal, delta);
+#ifdef LBA2_TARGET_WIIU
+        if (fadeIter < 5) {
+            LogPrintf("[FadeToPalAndSamples] iter=%d delta=%d (FADE_DELAY=%d)\n",
+                      fadeIter, (int)delta, (int)FADE_DELAY);
+        }
+        fadeIter++;
+        if (fadeIter > 100000) {
+            LogPrintf("[FadeToPalAndSamples] ABORT: looped 100000 iters with delta=%d\n", (int)delta);
+            break;
+        }
+#endif
     } while (delta != FADE_DELAY);
+#ifdef LBA2_TARGET_WIIU
+    {
+        static int s_exit_log = 0;
+        if (s_exit_log < 3) {
+            LogPrintf("[FadeToPalAndSamples] exit after %d iters final delta=%d\n", fadeIter, (int)delta);
+            s_exit_log++;
+        }
+    }
+#endif
 
     FlagBlackPal = FALSE;
 

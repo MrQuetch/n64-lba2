@@ -1,5 +1,7 @@
 #include "DEFINES.H"
 
+#include <SYSTEM/wiiu_endian.h>
+
 /*══════════════════════════════════════════════════════════════════════════*
 		      █▀▀▀▄ █▀▀▀▀ █▀▀▀▀ █▀▀▀█ █▀▀▀█ ██▀▀▀
 		      ██  █ ██▀▀  ██    ██  █ ██▀█▀ ▀▀▀▀█
@@ -376,12 +378,20 @@ void AffichageObjetDecorsZBuf(void) {
                                      clipzstart,
                                      ptrtri->Zrot - StartZFog));
 
+        // .OBL bodies are raw LE T_BODY_HEADER blobs. WiiU_SwapBodyHeader is
+        // idempotent (SizeHeader sentinel), so calling it on every fetch also
+        // covers HQR cache evictions that reload fresh LE data from disk.
+        void *oblBody = HQR_Get(HQR_Isle_Obj, ptrobj->Body & 0xFFFF);
+#ifdef LBA2_TARGET_WIIU
+        WiiU_SwapBodyHeader(oblBody);
+#endif
+
         if (BodyDisplay(ptrobj->Xworld,
                         ptrobj->Yworld,
                         ptrobj->Zworld,
                         0,
                         (ptrobj->Beta & 0xFFFF), 0,
-                        HQR_Get(HQR_Isle_Obj, ptrobj->Body & 0xFFFF))) {
+                        oblBody)) {
             SetClip(ScreenXMin, ScreenYMin, ScreenXMax, ScreenYMax);
             if (ClipXMin <= ClipXMax
                                 AND ClipYMin <= ClipYMax) {

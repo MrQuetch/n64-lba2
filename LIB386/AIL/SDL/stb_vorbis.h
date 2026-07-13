@@ -28,6 +28,8 @@ extern int stb_vorbis_decode_filename(const char *filename, int *channels, int *
 /* Incremental decoding API */
 extern stb_vorbis * stb_vorbis_open_filename(const char *filename,
                                   int *error, const stb_vorbis_alloc *alloc_buffer);
+extern stb_vorbis * stb_vorbis_open_memory(const unsigned char *data, int len,
+                                  int *error, const stb_vorbis_alloc *alloc_buffer);
 extern stb_vorbis_info stb_vorbis_get_info(stb_vorbis *f);
 extern int stb_vorbis_get_samples_short_interleaved(stb_vorbis *f, int channels, short *buffer, int num_shorts);
 extern void stb_vorbis_close(stb_vorbis *f);

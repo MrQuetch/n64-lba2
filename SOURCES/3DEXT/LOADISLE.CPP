@@ -2,6 +2,8 @@
 
 #include "../DIRECTORIES.H"
 
+#include <SYSTEM/wiiu_endian.h>
+
 // nom du HQR (citadele.hqr)
 
 // contient:
@@ -193,7 +195,18 @@ S32 LoadCube(S32 x, S32 y) {
     // index-1 pour vrai index fichier (0 == pas de cube, 1 == 1er cube (num 0) )
     index = HQR_START_CUBE + HQR_STEP_CUBE * (index - 1);
 
-    ListCubeInfos = (S32 *)HQR_Get(HQR_CubeInfos, index + HQR_CUBE_INF);
+    // All .ILE cube records are raw little-endian on disk. On Wii U each one
+    // is byte-swapped in place exactly once: HQR_Flag is TRUE only when
+    // HQR_Get just loaded the bloc from disk (cache hits return data already
+    // swapped by a previous LoadCube). After this, every consumer (TERRAIN,
+    // DECORS, MAPTOOLS, EXTFUNC, PERSO) reads plain host-order values.
+    S32 recSize = 0;
+
+    ListCubeInfos = (S32 *)HQR_Get(HQR_CubeInfos, index + HQR_CUBE_INF, &recSize);
+#ifdef LBA2_TARGET_WIIU
+    if (HQR_Flag)
+        WiiU_SwapU32Array(ListCubeInfos, (unsigned int)recSize); // INF: S32 array
+#endif
 
     NbObjDecors = ListCubeInfos[INFO_NB_DECORS];
     AlphaLight = ListCubeInfos[INFO_ALPHA_LIGHT] & 0xFFFF;
@@ -226,15 +239,32 @@ S32 LoadCube(S32 x, S32 y) {
     SetFog(StartZFog, ClipZFar);
 
     if (NbObjDecors != 0) {
-        ListDecors = (T_DECORS *)HQR_Get(HQR_ListDecors, index + HQR_CUBE_DOB);
+        ListDecors = (T_DECORS *)HQR_Get(HQR_ListDecors, index + HQR_CUBE_DOB, &recSize);
+#ifdef LBA2_TARGET_WIIU
+        if (HQR_Flag)
+            WiiU_SwapU32Array(ListDecors, (unsigned int)recSize); // DOB: T_DECORS = 12 S32
+#endif
     }
 
-    MapPolyGround = (T_HALF_POLY *)HQR_Get(HQR_MapPGround, index + HQR_CUBE_GRD);
+    MapPolyGround = (T_HALF_POLY *)HQR_Get(HQR_MapPGround, index + HQR_CUBE_GRD, &recSize);
+#ifdef LBA2_TARGET_WIIU
+    if (HQR_Flag)
+        WiiU_SwapU32Array(MapPolyGround, (unsigned int)recSize); // GRD: T_HALF_POLY = 1 U32
+#endif
 
-    ListTexDef = (T_HALF_TEX *)HQR_Get(HQR_ListTexDef, index + HQR_CUBE_TXD);
+    ListTexDef = (T_HALF_TEX *)HQR_Get(HQR_ListTexDef, index + HQR_CUBE_TXD, &recSize);
+#ifdef LBA2_TARGET_WIIU
+    if (HQR_Flag)
+        WiiU_SwapU16Array(ListTexDef, (unsigned int)recSize); // TXD: T_HALF_TEX = 6 U16
+#endif
 
-    MapSommetY = (S16 *)HQR_Get(HQR_MapSommetY, index + HQR_CUBE_Y);
+    MapSommetY = (S16 *)HQR_Get(HQR_MapSommetY, index + HQR_CUBE_Y, &recSize);
+#ifdef LBA2_TARGET_WIIU
+    if (HQR_Flag)
+        WiiU_SwapU16Array(MapSommetY, (unsigned int)recSize); // Y: 65*65 S16 altitudes
+#endif
 
+    // LUM: 65*65 U8 vertex intensities — single bytes, no swap needed.
     MapIntensity = (U8 *)HQR_Get(HQR_MapIntensity, index + HQR_CUBE_LUM);
 
     return TRUE;

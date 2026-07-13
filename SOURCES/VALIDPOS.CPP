@@ -33,7 +33,7 @@ void SaveValidePos(void) {
 
 #ifdef DEBUG_TOOLS
     if (SizeOfBufferValidePos >= SIZE_BUFFER_VALIDE_POS) {
-        Message("Warning: BufferValidePos trop petit (ça a dû patché) !", TRUE);
+        Message("Warning: BufferValidePos trop petit (\x87" "a a d\x96 patch\x82) !", TRUE);
     }
 #endif
 }

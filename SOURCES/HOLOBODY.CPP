@@ -1,6 +1,8 @@
 
 #include "C_EXTERN.H"
 
+#include <SYSTEM/wiiu_endian.h>
+
 //****************************************************************************
 //****************************************************************************
 //────────────────────────────────────────────────────────────────────────────
@@ -100,6 +102,14 @@ U32 GetSizeBody3D(U8 *ptbody) {
 }
 //────────────────────────────────────────────────────────────────────────────
 //	echelle 256 = 1
+//
+// Anim blobs stay LE in memory on Wii U (every ANIM.CPP reader swaps on
+// access, unlike bodies which are swapped in place once). So this in-place
+// scaler must read LE and write back LE to keep the buffer consistent for
+// the playback path. LBA2_LE16 is a no-op on little-endian targets.
+#define ANIM_RD16(v) ((S16)LBA2_LE16((U16)(v)))
+#define ANIM_WR16(v) ((S16)LBA2_LE16((U16)(S16)(v)))
+
 void ScaleRotAnim3D(U8 *ptanim, S32 scale, S32 flagrot) {
     S16 *pt;
     U16 nbframe;
@@ -108,40 +118,41 @@ void ScaleRotAnim3D(U8 *ptanim, S32 scale, S32 flagrot) {
     S32 x, y, z;
 
     pt = (S16 *)ptanim;
-    nbframe = *(U16 *)pt++;
-    nbgroup = *(U16 *)pt;
+    nbframe = LBA2_LE16(*(U16 *)pt);
+    pt++;
+    nbgroup = LBA2_LE16(*(U16 *)pt);
     pt += 3;
 
     for (frm = 0; frm < nbframe; frm++) {
-        pt++;                      //	Jump Time
-        x = (pt[0] * scale) / 256; //	StepX
-        y = (pt[1] * scale) / 256; //	StepY
-        z = (pt[2] * scale) / 256; //	StepZ
+        pt++;                              //	Jump Time
+        x = (ANIM_RD16(pt[0]) * scale) / 256; //	StepX
+        y = (ANIM_RD16(pt[1]) * scale) / 256; //	StepY
+        z = (ANIM_RD16(pt[2]) * scale) / 256; //	StepZ
         if (flagrot) {
             Rotate(z, y, 1024);
             y = Z0;
             z = X0;
         }
-        pt[0] = (S16)x;
-        pt[1] = (S16)y;
-        pt[2] = (S16)z;
+        pt[0] = ANIM_WR16(x);
+        pt[1] = ANIM_WR16(y);
+        pt[2] = ANIM_WR16(z);
 
         pt += 7; //	Jump MasterRot, al, be & ga
 
         for (grp = 1; grp < nbgroup; grp++, pt += 4) {
-            if (*pt == 0)
-                continue;              // Only Transition
-            x = (pt[1] * scale) / 256; //	StepX
-            y = (pt[2] * scale) / 256; //	StepY
-            z = (pt[3] * scale) / 256; //	StepZ
+            if (*pt == 0) //	0 is endian-neutral
+                continue;                     // Only Transition
+            x = (ANIM_RD16(pt[1]) * scale) / 256; //	StepX
+            y = (ANIM_RD16(pt[2]) * scale) / 256; //	StepY
+            z = (ANIM_RD16(pt[3]) * scale) / 256; //	StepZ
             if (flagrot) {
                 Rotate(z, y, 1024);
                 y = Z0;
                 z = X0;
             }
-            pt[1] = (S16)x;
-            pt[2] = (S16)y;
-            pt[3] = (S16)z;
+            pt[1] = ANIM_WR16(x);
+            pt[2] = ANIM_WR16(y);
+            pt[3] = ANIM_WR16(z);
         }
     }
 }
@@ -154,8 +165,11 @@ U32 GetSizeAnim3D(U8 *ptanim) {
 
     pt = (S16 *)ptanim;
 
-    nbframe = *(U16 *)pt++;
-    nbgroup = *(U16 *)pt;
+    // LE fields (see ScaleRotAnim3D): raw BE reads here made SizeCurrentAnim
+    // huge, blowing the HoloMalloc arena before the globe even loaded.
+    nbframe = LBA2_LE16(*(U16 *)pt);
+    pt++;
+    nbgroup = LBA2_LE16(*(U16 *)pt);
 
     pt += (3 + (nbframe * (nbgroup + 1) * 4));
 

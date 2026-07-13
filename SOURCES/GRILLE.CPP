@@ -2,6 +2,15 @@
 #include "DIRECTORIES.H"
 
 #include <SVGA/SCREEN.H>
+#include <SYSTEM/LOGPRINT.H>
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+#  define WIIU_TRACE(s) LogPrintf("[trace] " s)
+#  define WIIU_TRACE_FMT(...) LogPrintf(__VA_ARGS__)
+#else
+#  define WIIU_TRACE(s) ((void)0)
+#  define WIIU_TRACE_FMT(...) ((void)0)
+#endif
 
 /*══════════════════════════════════════════════════════════════════════════*
 		      █▀▀▀▀ █▀▀▀█  █    █     █     █▀▀▀▀
@@ -124,6 +133,7 @@ S32 LoadUsedBrick() {
 
     //-------------------------------------- Premiere Passe, Préparation ptflag
 
+    WIIU_TRACE("LoadUsedBrick: pass1 (collect min/max) enter");
     pt = GriHeader->UsedBlock; /* Debut de Used Block */
 
     nbbrick = 0;
@@ -133,12 +143,14 @@ S32 LoadUsedBrick() {
         if (!b)
             continue;
 
-        ptb = TabBlock + *(U32 *)(TabBlock + ((i - 1) << 2));
+        // TabBlock starts with a U32 offset table (LE on disk). Without the
+        // swap, ptb points into nowhere and the brick scan reads garbage.
+        ptb = TabBlock + LBA2_LE32(*(U32 *)(TabBlock + ((i - 1) << 2)));
         ptw = (U16 *)(ptb + 5);                  /* Jump dx dy dz et collis */
         maxbrk = *ptb * *(ptb + 1) * *(ptb + 2); /* dx*dy*dz*/
 
         for (j = 0; j < maxbrk; j++, ptw += 2) {
-            brick = *ptw;
+            brick = LBA2_LE16(*ptw); // U16 LE brick reference
 
             if (brick) {
                 brick--;
@@ -155,13 +167,18 @@ S32 LoadUsedBrick() {
             }
         }
     }
+    WIIU_TRACE_FMT("[trace] LoadUsedBrick: pass1 exit (nbbrick=%d min=%u max=%u)\n",
+                   nbbrick, (unsigned)min, (unsigned)max);
 
     //-------------------------------------- Deuxieme Passe, Load Brick
 
+    WIIU_TRACE("LoadUsedBrick: pass2 (load bricks) enter");
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, BKG_HQR_NAME);
     handle = OpenRead(tmpFilePath);
-    if (!handle)
+    if (!handle) {
+        WIIU_TRACE("LoadUsedBrick: OpenRead(BKG) FAILED");
         return (0L);
+    }
 
     Seek(handle, BkgHeader.Brk_Start << 2, SEEK_FROM_START); // Begin offsets Brk
 
@@ -185,28 +202,62 @@ S32 LoadUsedBrick() {
         if (*ptflag) {
             nbbrick++;              /*	One More*/
             *ptflag = (S16)nbbrick; /*	Brick+1, for BLL */
-            offseek = *(ptseek + i);
+            offseek = LBA2_LE32(*(ptseek + i)); // U32 LE seek offset
             Seek(handle, offseek, SEEK_FROM_START);
             Read(handle, &header, sizeof(header));
-            switch (header.CompressMethod) {
+            // COMPRESSED_HEADER on disk is LE-encoded. SizeFile/CompressedSizeFile
+            // are U32, but CompressMethod is S16 (see HQR.H). Using LE32 on a 16-bit
+            // field promotes it to U32 then byte-swaps the wrong 4 bytes — for LZSS
+            // method=1, that produces 0x10000 (65536) which matches no switch case
+            // → brick is never loaded → BufferBrick stays zero → CalcGraphMsk
+            // produces 256x256 garbage iterations and overflows BufferMaskBrick.
+            U32 hCompressMethod    = LBA2_LE16(header.CompressMethod);
+            U32 hSizeFile          = LBA2_LE32(header.SizeFile);
+            U32 hCompressedSizeFile = LBA2_LE32(header.CompressedSizeFile);
+#ifdef LBA2_TARGET_WIIU
+            if (nbbrick <= 3) {
+                LogPrintf("[pass2] brick %d (i=%u): offseek=0x%08X method=%u sizeFile=%u compressedSize=%u ptdata=%p\n",
+                          (int)nbbrick, (unsigned)i, (unsigned)offseek,
+                          (unsigned)hCompressMethod, (unsigned)hSizeFile,
+                          (unsigned)hCompressedSizeFile, (void*)ptdata);
+                LogPrintf("[pass2] header raw bytes: %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X\n",
+                          ((U8*)&header)[0], ((U8*)&header)[1], ((U8*)&header)[2], ((U8*)&header)[3],
+                          ((U8*)&header)[4], ((U8*)&header)[5], ((U8*)&header)[6], ((U8*)&header)[7],
+                          ((U8*)&header)[8], ((U8*)&header)[9], ((U8*)&header)[10], ((U8*)&header)[11]);
+            }
+#endif
+            switch (hCompressMethod) {
             case 0: //	No compression
-                Read(handle, ptdata, header.SizeFile);
+                Read(handle, ptdata, hSizeFile);
                 break;
             case 1: //	Compression LZSS
-                ptdecomp = ptdata + header.SizeFile - header.CompressedSizeFile + 500;
-                Read(handle, ptdecomp, header.CompressedSizeFile);
+                ptdecomp = ptdata + hSizeFile - hCompressedSizeFile + 500;
+                Read(handle, ptdecomp, hCompressedSizeFile);
                 //					ExpandLZSS( ptdecomp, ptdata, header.SizeFile )	;
-                ExpandLZ(ptdata, ptdecomp, header.SizeFile, 2);
+                ExpandLZ(ptdata, ptdecomp, hSizeFile, 2);
                 break;
             }
-            ptdata += header.SizeFile;
-            offset += header.SizeFile;
+#ifdef LBA2_TARGET_WIIU
+            if (nbbrick <= 3) {
+                LogPrintf("[pass2] brick %d post-load first 16 bytes: %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X\n",
+                          (int)nbbrick,
+                          ptdata[0], ptdata[1], ptdata[2], ptdata[3],
+                          ptdata[4], ptdata[5], ptdata[6], ptdata[7],
+                          ptdata[8], ptdata[9], ptdata[10], ptdata[11],
+                          ptdata[12], ptdata[13], ptdata[14], ptdata[15]);
+            }
+#endif
+            ptdata += hSizeFile;
+            offset += hSizeFile;
             *ptoff++ = offset;
         }
     }
+    WIIU_TRACE_FMT("[trace] LoadUsedBrick: pass2 exit (loaded %d bricks, total offset=%u)\n",
+                   nbbrick, (unsigned)offset);
 
     //-------------------------------------- Troisieme passe, Rename Block
 
+    WIIU_TRACE("LoadUsedBrick: pass3 (rename block) enter");
     pt = GriHeader->UsedBlock; /* Debut de Used Block */
 
     for (i = 1; i < 256; i++) {
@@ -214,15 +265,21 @@ S32 LoadUsedBrick() {
         if (!b)
             continue;
 
-        ptb = TabBlock + *(U32 *)(TabBlock + ((i - 1) << 2));
+        ptb = TabBlock + LBA2_LE32(*(U32 *)(TabBlock + ((i - 1) << 2)));
         ptw = (U16 *)(ptb + 5);                  /* Jump dx dy dz et collis */
         maxbrk = *ptb * *(ptb + 1) * *(ptb + 2); /* dx*dy*dz*/
 
         for (j = 0; j < maxbrk; j++, ptw += 2) {
-            if (*ptw)
-                *ptw = tabflag[(*ptw) - 1];
+            U16 brk = LBA2_LE16(*ptw);
+            if (brk) {
+                // tabflag is host-order (we wrote it ourselves). Write back as
+                // LE so subsequent BLL consumers (which still expect LE in
+                // TabBlock) see a consistent layout.
+                *ptw = LBA2_LE16(tabflag[brk - 1]);
+            }
         }
     }
+    WIIU_TRACE("LoadUsedBrick: pass3 exit");
 
     Close(handle);
 
@@ -236,40 +293,140 @@ void InitGrille(U32 numcube) {
     U32 id_bll;
     char tmpFilePath[ADELINE_MAX_PATH];
 
+    WIIU_TRACE_FMT("[trace] InitGrille(numcube=%u): enter, BkgHeader.Gri_Start=%u Bll_Start=%u\n",
+                   (unsigned)numcube,
+                   (unsigned)BkgHeader.Gri_Start,
+                   (unsigned)BkgHeader.Bll_Start);
+
     numcube = TabAllCube[numcube].Num; //	Indirection
+    WIIU_TRACE_FMT("[trace] InitGrille: TabAllCube indirection -> numcube=%u\n", (unsigned)numcube);
 
     id_gri = BkgHeader.Gri_Start + numcube;
 
     GriHeader = (T_GRI_HEADER *)BufMap;
 
+    WIIU_TRACE_FMT("[trace] InitGrille: Load_HQR(BKG, BufMap, id_gri=%u) enter\n", (unsigned)id_gri);
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, BKG_HQR_NAME);
     Load_HQR(tmpFilePath, BufMap, id_gri);
+    WIIU_TRACE("InitGrille: Load_HQR(BufMap) exit");
 
+    WIIU_TRACE("InitGrille: ManageSystem #1 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("InitGrille: ManageSystem #1 exit");
 
     id_bll = BkgHeader.Bll_Start + GriHeader->My_Bll; //+numcube
+    WIIU_TRACE_FMT("[trace] InitGrille: GriHeader->My_Bll=%u id_bll=%u\n",
+                   (unsigned)GriHeader->My_Bll, (unsigned)id_bll);
 
+    WIIU_TRACE("InitGrille: Load_HQR(BKG, TabBlock, id_bll) enter");
     Load_HQR(tmpFilePath, TabBlock, id_bll);
+    WIIU_TRACE("InitGrille: Load_HQR(TabBlock) exit");
+
+#ifdef LBA2_TARGET_WIIU
+    {
+        LogPrintf("[BkgHeader] Bll_Start=%u Brk_Start=%u Max_Brk=%u Max_Size_Gri=%u Max_Size_Bll=%u Max_Size_BrickCube=%u Max_Size_MaskBrickCube=%u\n",
+                  (unsigned)BkgHeader.Bll_Start, (unsigned)BkgHeader.Brk_Start,
+                  (unsigned)BkgHeader.Max_Brk, (unsigned)BkgHeader.Max_Size_Gri,
+                  (unsigned)BkgHeader.Max_Size_Bll,
+                  (unsigned)BkgHeader.Max_Size_Brick_Cube,
+                  (unsigned)BkgHeader.Max_Size_Mask_Brick_Cube);
+        U32 *t = (U32 *)TabBlock;
+        LogPrintf("[BLL dump] TabBlock first 64 U32 entries (256 bytes):\n");
+        for (int k = 0; k < 64; k++) {
+            LogPrintf("  [%2d] raw=0x%08X swap=0x%08X\n",
+                      k, (unsigned)t[k], (unsigned)LBA2_LE32(t[k]));
+        }
+        U8 *ub = GriHeader->UsedBlock;
+        LogPrintf("[BLL dump] GriHeader->UsedBlock 32 bytes:\n");
+        LogPrintf("  %02X %02X %02X %02X %02X %02X %02X %02X  %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                  ub[0], ub[1], ub[2], ub[3], ub[4], ub[5], ub[6], ub[7],
+                  ub[8], ub[9], ub[10], ub[11], ub[12], ub[13], ub[14], ub[15]);
+        LogPrintf("  %02X %02X %02X %02X %02X %02X %02X %02X  %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                  ub[16], ub[17], ub[18], ub[19], ub[20], ub[21], ub[22], ub[23],
+                  ub[24], ub[25], ub[26], ub[27], ub[28], ub[29], ub[30], ub[31]);
+    }
+#endif
 
     //----------------------------------------------	NEW
-    if (!LoadUsedBrick())
+    WIIU_TRACE("InitGrille: LoadUsedBrick enter");
+    if (!LoadUsedBrick()) {
+        WIIU_TRACE("InitGrille: LoadUsedBrick returned FALSE -> early return");
         return;
+    }
+    WIIU_TRACE("InitGrille: LoadUsedBrick exit");
+
+#ifdef LBA2_TARGET_WIIU
+    {
+        U32 *t = (U32 *)TabBlock;
+        LogPrintf("[BLL post-LoadUsedBrick] entry[0]=0x%08X swap=0x%08X entry[16]=0x%08X swap=0x%08X\n",
+                  (unsigned)t[0], (unsigned)LBA2_LE32(t[0]),
+                  (unsigned)t[16], (unsigned)LBA2_LE32(t[16]));
+    }
+#endif
     //----------------------------------------------
 
+    WIIU_TRACE("InitGrille: ManageSystem #2 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("InitGrille: ManageSystem #2 exit");
 
+    WIIU_TRACE("InitGrille: CreateMaskGph enter");
     CreateMaskGph(BufferBrick, BufferMaskBrick);
+    WIIU_TRACE("InitGrille: CreateMaskGph exit");
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        U32 *t = (U32 *)TabBlock;
+        LogPrintf("[BLL post-CreateMaskGph] entry[0]=0x%08X swap=0x%08X entry[16]=0x%08X swap=0x%08X\n",
+                  (unsigned)t[0], (unsigned)LBA2_LE32(t[0]),
+                  (unsigned)t[16], (unsigned)LBA2_LE32(t[16]));
+    }
+#endif
+
+    WIIU_TRACE("InitGrille: ManageSystem #3 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("InitGrille: ManageSystem #3 exit");
 
-    NbBlock = (*(U32 *)TabBlock) / 4;
+    // TabBlock starts with a U32 offset table stored little-endian on disk.
+    // Without LE32 swap, NbBlock balloons to ~67M and CopyMapToCube blasts
+    // gigabytes of garbage into ListObjet, clobbering ptrobj->PtrFile3D for
+    // every scene object beyond Twinsen.
+    NbBlock = LBA2_LE32(*(U32 *)TabBlock) / 4;
+    WIIU_TRACE_FMT("[trace] InitGrille: NbBlock=%u (raw first U32 of TabBlock = 0x%08X swapped=0x%08X)\n",
+                   (unsigned)NbBlock,
+                   (unsigned)(*(U32 *)TabBlock),
+                   (unsigned)LBA2_LE32(*(U32 *)TabBlock));
 
+    WIIU_TRACE("InitGrille: CopyMapToCube enter");
     CopyMapToCube();
+    WIIU_TRACE("InitGrille: CopyMapToCube exit");
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        U32 *t = (U32 *)TabBlock;
+        LogPrintf("[BLL post-CopyMapToCube] entry[0]=0x%08X swap=0x%08X entry[16]=0x%08X swap=0x%08X\n",
+                  (unsigned)t[0], (unsigned)LBA2_LE32(t[0]),
+                  (unsigned)t[16], (unsigned)LBA2_LE32(t[16]));
+    }
+#endif
+
+    WIIU_TRACE("InitGrille: ManageSystem #4 enter");
     ManageSystem(); // for streaming
+    WIIU_TRACE("InitGrille: ManageSystem #4 exit");
 
+    WIIU_TRACE("InitGrille: RedrawGRMs enter");
     RedrawGRMs(); // au cas ou il y ait des GRMs actives
+    WIIU_TRACE("InitGrille: RedrawGRMs exit");
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        U32 *t = (U32 *)TabBlock;
+        LogPrintf("[BLL post-RedrawGRMs] entry[0]=0x%08X swap=0x%08X entry[16]=0x%08X swap=0x%08X\n",
+                  (unsigned)t[0], (unsigned)LBA2_LE32(t[0]),
+                  (unsigned)t[16], (unsigned)LBA2_LE32(t[16]));
+    }
+#endif
+
+    WIIU_TRACE("InitGrille: end");
     return;
 }
 
@@ -293,7 +450,9 @@ void FreeGrille() {}
 U8 *GetAdrColonneMap(S32 x, S32 z) {
     U32 offset;
 
-    offset = *(U16 *)(BufMap + sizeof(T_GRI_HEADER) + (x + (z * SIZE_CUBE_Z)) * 2);
+    // BufMap U16 offset table is LE on disk; without swap CopyMapToCube
+    // dereferences garbage column pointers.
+    offset = LBA2_LE16(*(U16 *)(BufMap + sizeof(T_GRI_HEADER) + (x + (z * SIZE_CUBE_Z)) * 2));
 
     return (BufMap + sizeof(T_GRI_HEADER) + offset);
 }
@@ -517,13 +676,39 @@ U32 CreateMaskGph(U8 *ptsrc, U8 *ptdst) {
 
     nbg = (off - 4) >> 2; /*	Nombre de Graph	*/
 
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[CreateMaskGph] entry: ptsrc=%p ptdst=%p first_off=%u nbg=%u BufferMaskBrick.size=%ld\n",
+              (void*)ptsrc, (void*)ptdst, (unsigned)off, (unsigned)nbg,
+              (long)ListMem[MEM_BUFFER_MASK_BRICK].Size);
+    U8 *ptd_initial = ptd;
+    U32 max_size_hint = (U32)ListMem[MEM_BUFFER_MASK_BRICK].Size;
+#endif
+
     for (i = 0; i < nbg; i++) {
         size = CalcGraphMsk(i, ptsrc, ptd);
+
+#ifdef LBA2_TARGET_WIIU
+        if (i < 8 || (size > 1024)) {
+            LogPrintf("[CreateMaskGph] i=%u size=%u total=%u (limit=%u) ptd_offset=%ld\n",
+                      (unsigned)i, (unsigned)size, (unsigned)(off + size),
+                      max_size_hint, (long)(ptd - ptd_initial));
+        }
+        if (off + size > max_size_hint) {
+            LogPrintf("[CreateMaskGph] OVERFLOW at i=%u: cumulative off=%u > max=%u, ABORTING loop\n",
+                      (unsigned)i, (unsigned)(off + size), max_size_hint);
+            // Truncate to avoid TabBlock corruption while we figure out the real fix
+            return off;
+        }
+#endif
 
         off += size;    /*	Maj Offset	*/
         *ptoff++ = off; /*	Write Offset 	*/
         ptd += size;    /*	Maj Pt Dest	*/
     }
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[CreateMaskGph] exit: total_off=%u ptd_advanced=%ld nbg=%u\n",
+              (unsigned)off, (long)(ptd - ptd_initial), (unsigned)nbg);
+#endif
     return (off);
 }
 
@@ -551,6 +736,21 @@ void InitBufferCube() {
 
     //	pas de RECOVER_AREA car BkgHeader en stored et pas en LZSS
     Load_HQR(tmpFilePath, &BkgHeader, 0); // HEADER
+#ifdef LBA2_TARGET_WIIU
+    // T_BKG_HEADER fields stored little-endian in bkg.hqr (x86 retail format).
+    // Byte-swap on PPC, otherwise the size fields explode and MainBuffer
+    // computation fails. 6x U16 + 4x U32 = 28 bytes packed.
+    BkgHeader.Gri_Start                = LBA2_LE16(BkgHeader.Gri_Start);
+    BkgHeader.Grm_Start                = LBA2_LE16(BkgHeader.Grm_Start);
+    BkgHeader.Bll_Start                = LBA2_LE16(BkgHeader.Bll_Start);
+    BkgHeader.Brk_Start                = LBA2_LE16(BkgHeader.Brk_Start);
+    BkgHeader.Max_Brk                  = LBA2_LE16(BkgHeader.Max_Brk);
+    BkgHeader.ForbidenBrick            = LBA2_LE16(BkgHeader.ForbidenBrick);
+    BkgHeader.Max_Size_Gri             = LBA2_LE32(BkgHeader.Max_Size_Gri);
+    BkgHeader.Max_Size_Bll             = LBA2_LE32(BkgHeader.Max_Size_Bll);
+    BkgHeader.Max_Size_Brick_Cube      = LBA2_LE32(BkgHeader.Max_Size_Brick_Cube);
+    BkgHeader.Max_Size_Mask_Brick_Cube = LBA2_LE32(BkgHeader.Max_Size_Mask_Brick_Cube);
+#endif
 
     // 	pas de RECOVER_AREA car TabAllCube en stored et pas en LZSS
     Load_HQR(tmpFilePath, (void *)TabAllCube, BkgHeader.Brk_Start + BkgHeader.Max_Brk);
@@ -722,6 +922,9 @@ void AffBrickBlock(S32 block, S32 brick, S16 x, S16 y, S16 z) {
     register T_COLONB *ptrlbc;
     S16 numbrick;
     U8 brickcol;
+#ifdef LBA2_TARGET_WIIU
+    static int s_abb_logged = 0;
+#endif
 
     adr = GetAdrBlock(block);
     adr += HEADER_BLOCK;
@@ -730,12 +933,48 @@ void AffBrickBlock(S32 block, S32 brick, S16 x, S16 y, S16 z) {
     brickcol = *adr;
     adr += 2;
 
-    numbrick = *(U16 *)adr; /* & 32767 */
+    // numbrick is LE on disk inside TabBlock; without swap AffGraph gets a
+    // garbage index and overruns BufferBrick header → RefreshGrille hang.
+    numbrick = LBA2_LE16(*(U16 *)adr); /* & 32767 */
+
+#ifdef LBA2_TARGET_WIIU
+    if (s_abb_logged < 5) {
+        U8 *adr_block = GetAdrBlock(block);
+        LogPrintf("[AffBrickBlock] block=%d brick=%d adr_block=%p numbrick=%d brickcol=%d ForbidenBrick=%d\n",
+                  (int)block, (int)brick, (void*)adr_block, (int)numbrick,
+                  (int)brickcol, (int)ForbidenBrick);
+        s_abb_logged++;
+    }
+#endif
 
     if (numbrick AND numbrick != ForbidenBrick) {
         Map2Screen(x - StartXCube, y - StartYCube, z - StartZCube);
 
+#ifdef LBA2_TARGET_WIIU
+        {
+            static int s_m2s_log = 0;
+            if (s_m2s_log < 6) {
+                LogPrintf("[Map2Screen] in_x=%d y=%d z=%d StartCube={%d,%d,%d} -> XScreen=%d YScreen=%d\n",
+                          (int)x, (int)y, (int)z,
+                          (int)StartXCube, (int)StartYCube, (int)StartZCube,
+                          (int)XScreen, (int)YScreen);
+                s_m2s_log++;
+            }
+        }
+#endif
+
         if (XScreen >= -24 AND XScreen < 640 AND YScreen >= -38 AND YScreen < 480) {
+#ifdef LBA2_TARGET_WIIU
+            static int s_affgraph_logged = 0;
+            if (s_affgraph_logged < 3) {
+                U32 *bbtab = (U32*)BufferBrick;
+                LogPrintf("[AffBrickBlock] calling AffGraph numgraph=%d xs=%d ys=%d bb_tab[0..3]=0x%08X 0x%08X 0x%08X 0x%08X\n",
+                          (int)(numbrick-1), (int)XScreen, (int)YScreen,
+                          (unsigned)bbtab[0], (unsigned)bbtab[1],
+                          (unsigned)bbtab[2], (unsigned)bbtab[3]);
+                s_affgraph_logged++;
+            }
+#endif
             AffGraph(numbrick - 1, XScreen, YScreen, BufferBrick);
 
             col = (XScreen + 24) / 24; /* 48 / 2 colonne intercalée */
@@ -765,6 +1004,34 @@ void AffGrille() {
     S32 block;
     U8 *ptc;
     S16 z, y, x;
+#ifdef LBA2_TARGET_WIIU
+    static U8 affgrille_first_done = 0;
+    int total_cells = 0;
+    int blocks_seen = 0;
+    int affbrickcalls = 0;
+    if (!affgrille_first_done) {
+        LogPrintf("[trace] AffGrille: entry, Twinsen.Obj={%d,%d,%d} StartCube={%d,%d,%d}\n",
+                  (int)ListObjet[0].Obj.X, (int)ListObjet[0].Obj.Y, (int)ListObjet[0].Obj.Z,
+                  (int)StartXCube, (int)StartYCube, (int)StartZCube);
+        LogPrintf("[trace] AffGrille: entry, BufCube=%p TabBlock=%p BufferBrick=%p ForbidenBrick=%d\n",
+                  (void*)BufCube, (void*)TabBlock, (void*)BufferBrick, (int)ForbidenBrick);
+        // dump TabBlock state AT this point to detect post-init corruption
+        U32 *t = (U32 *)TabBlock;
+        LogPrintf("[AffGrille] TabBlock first 32 U32 NOW (in AffGrille):\n");
+        for (int k = 0; k < 32; k++) {
+            LogPrintf("  [%2d] raw=0x%08X swap=0x%08X\n",
+                      k, (unsigned)t[k], (unsigned)LBA2_LE32(t[k]));
+        }
+        // Also dump first 32 bytes of BufCube to see what blocks are stored
+        U8 *bc = BufCube;
+        LogPrintf("[AffGrille] BufCube first 32 bytes (z=0,x=0,y=0..15 pairs):\n");
+        for (int k = 0; k < 32; k += 16) {
+            LogPrintf("  +%02X: %02X %02X %02X %02X %02X %02X %02X %02X  %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                      k, bc[k], bc[k+1], bc[k+2], bc[k+3], bc[k+4], bc[k+5], bc[k+6], bc[k+7],
+                      bc[k+8], bc[k+9], bc[k+10], bc[k+11], bc[k+12], bc[k+13], bc[k+14], bc[k+15]);
+        }
+    }
+#endif
 
     PtrProjectPoint(0, 0, 0);
     XpOrgw = Xp;
@@ -777,6 +1044,18 @@ void AffGrille() {
         for (x = 0; x < SIZE_CUBE_X; x++) {
             for (y = 0; y < SIZE_CUBE_Y; y++) {
                 block = *ptc++;
+#ifdef LBA2_TARGET_WIIU
+                total_cells++;
+                if (block) {
+                    blocks_seen++;
+                    if (!affgrille_first_done && affbrickcalls < 5) {
+                        LogPrintf("[AffGrille] cell #%d at z=%d x=%d y=%d block=%d brick=%d\n",
+                                  total_cells, (int)z, (int)x, (int)y,
+                                  (int)block, (int)*ptc);
+                        affbrickcalls++;
+                    }
+                }
+#endif
 
                 if (block) {
                     AffBrickBlock(block - 1, *ptc, x, y, z);
@@ -785,6 +1064,14 @@ void AffGrille() {
             }
         }
     }
+
+#ifdef LBA2_TARGET_WIIU
+    if (!affgrille_first_done) {
+        LogPrintf("[trace] AffGrille: exit, total_cells=%d blocks_seen=%d\n",
+                  total_cells, blocks_seen);
+        affgrille_first_done = 1;
+    }
+#endif
 }
 
 /*══════════════════════════════════════════════════════════════════════════*
@@ -811,7 +1098,7 @@ void AffBrickBlockColon(S32 block, S32 brick, S16 x, S16 y, S16 z) {
     brickcol = *adr;
     adr += 2;
 
-    numbrick = *(U16 *)adr; /* & 32767 */
+    numbrick = LBA2_LE16(*(U16 *)adr); /* & 32767 */
 
     if (numbrick AND numbrick != ForbidenBrick) {
         Map2Screen(x - StartXCube, y - StartYCube, z - StartZCube);
@@ -892,7 +1179,7 @@ void AffBrickBlockOnly(S32 block, S32 brick, S16 x, S16 y, S16 z) {
     adr += (brick << 2); /* 4 Bytes to Jump	*/
     adr += 2;
 
-    numbrick = *(U16 *)adr; /* & 32767 */
+    numbrick = LBA2_LE16(*(U16 *)adr); /* & 32767 */
 
     if (numbrick AND numbrick != ForbidenBrick) {
         Map2Screen(x - StartXCube, y - StartYCube, z - StartZCube);
@@ -1373,5 +1660,6 @@ void Map2Screen(S32 x, S32 y, S32 z) {
 
 //-------------------------------------------------------------------
 U8 *GetAdrBlock(S32 numblock) {
-    return TabBlock + ((U32 *)TabBlock)[numblock];
+    // TabBlock leading U32 offset table is LE on disk.
+    return TabBlock + LBA2_LE32(((U32 *)TabBlock)[numblock]);
 }

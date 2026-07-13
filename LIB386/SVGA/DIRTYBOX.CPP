@@ -12,6 +12,9 @@
 #include <SYSTEM/EVENTS.H>
 #include <SYSTEM/MOUSE.H>
 #include <SYSTEM/N_MALLOC.H>
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/LOGPRINT.H>
+#endif
 
 #include <limits.h>
 #include <stdlib.h>
@@ -142,6 +145,23 @@ void BltListAndEmpty(T_BOX **boxlist) {
     T_BOX **ppBox;
 
     ppBox = boxlist;
+
+#ifdef LBA2_TARGET_WIIU
+    {
+        extern volatile U8 wiiu_gameloop_active;
+        if (wiiu_gameloop_active) {
+            static int s_log = 0;
+            if (s_log < 4) {
+                int n = 0;
+                T_BOX *p = *boxlist;
+                while (p && n < 10000) { n++; p = p->pBoxNext; }
+                LogPrintf("[BltListAndEmpty#post-gameloop] boxlist=%p first=%p count=%d\n",
+                          (void *)boxlist, (void *)*boxlist, n);
+                s_log++;
+            }
+        }
+    }
+#endif
 
     while (*ppBox) // walk the list
     {
@@ -396,6 +416,15 @@ void BoxBlit() {
     S32 SaveClipXMin, SaveClipYMin, SaveClipXMax, SaveClipYMax;
     /* Safe defaults if mouse cursor graphic is missing (restore block must not use garbage). */
     S32 x0 = 0, y0 = 0, x1 = -1, y1 = -1;
+#ifdef LBA2_TARGET_WIIU
+    {
+        extern volatile U8 wiiu_gameloop_active;
+        if (wiiu_gameloop_active) {
+            static int s_log = 0;
+            if (s_log < 4) { LogPrintf("[BoxBlit#post-gameloop] enter\n"); s_log++; }
+        }
+    }
+#endif
 
     ManageEvents();
 

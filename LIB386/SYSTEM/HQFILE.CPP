@@ -4,6 +4,7 @@
 #include <SYSTEM/LZ.H>
 #include <SYSTEM/HQR.H>
 #include <SYSTEM/HQFILE.H>
+#include <SYSTEM/wiiu_endian.h>
 
 #include <stdio.h>
 
@@ -23,6 +24,7 @@ U32 HQF_Init(const char *name, S32 index) {
 
     index *= 4;
     Read(HQF_File, &nbbloc, 4);
+    nbbloc = LBA2_LE32(nbbloc);
 
     if (index >= nbbloc) {
     error:
@@ -32,6 +34,7 @@ U32 HQF_Init(const char *name, S32 index) {
 
     Seek(HQF_File, index, SEEK_FROM_START);
     Read(HQF_File, &index, 4);
+    index = LBA2_LE32(index);
 
     if (!index) {
         goto error;
@@ -39,6 +42,9 @@ U32 HQF_Init(const char *name, S32 index) {
 
     Seek(HQF_File, index, SEEK_FROM_START);
     Read(HQF_File, (void *)&HQF_header, sizeof(HQF_header));
+    HQF_header.SizeFile           = LBA2_LE32(HQF_header.SizeFile);
+    HQF_header.CompressedSizeFile = LBA2_LE32(HQF_header.CompressedSizeFile);
+    HQF_header.CompressMethod     = LBA2_LE16(HQF_header.CompressMethod);
 
     return HQF_header.SizeFile;
 }
@@ -99,6 +105,7 @@ S32 HQF_NbRes(char *name) {
     }
 
     Read(handle, &nbbloc, 4);
+    nbbloc = LBA2_LE32(nbbloc);
     Close(handle);
 
     return (nbbloc / 4 - 1);

@@ -4,6 +4,7 @@
 
 #include <SVGA/SCREEN.H>
 #include <SYSTEM/KEYBOARD_KEYS.H>
+#include <SYSTEM/wiiu_endian.h>
 
 #define ZOOM_A 2048 //	Big Islands
 #define ZOOM_B 1024 //	Islands with 4 cubes
@@ -427,6 +428,12 @@ void InitHoloPlan() {
 
     Load_HQR(tmpFilePath, buffer, id + 1);
 
+#ifdef LBA2_TARGET_WIIU
+    // The .M3D record is 9 raw LE S32 (org/off/angles/distance/light).
+    for (S32 m = 0; m < 9; m++)
+        buffer[m] = (S32)LBA2_LE32(buffer[m]);
+#endif
+
     AffUpperLeft(0, 0, 0);
     AffLowerLeft(0, 479, 0);
     AffUpperRight(639, 0, 0);
@@ -457,6 +464,14 @@ void InitHoloPlan() {
     BufLoFleche = (U8 *)LoadHoloMalloc_HQR(tmpFilePath, HQR_LOFLECHE);
     BufBuggy = (U8 *)LoadHoloMalloc_HQR(tmpFilePath, HQR_BUGGY);
     BufDyno = (U8 *)LoadHoloMalloc_HQR(tmpFilePath, HQR_DYNO);
+
+#ifdef LBA2_TARGET_WIIU
+    // holomap.hqr bodies bypass GivePtrBody's one-shot swap: raw LE from disk.
+    WiiU_SwapBodyHeader(BufFleche);
+    WiiU_SwapBodyHeader(BufLoFleche);
+    WiiU_SwapBodyHeader(BufBuggy);
+    WiiU_SwapBodyHeader(BufDyno);
+#endif
 
     ScaleRotBody3D(BufFleche, ArrowFactorScale[ZoomedIsland], FALSE);
     ScaleRotBody3D(BufLoFleche, ArrowFactorScale[ZoomedIsland], FALSE);

@@ -409,6 +409,18 @@ U8 *SearchImpact(char *name) {
 #endif // LBA_EDITOR
 
 /*──────────────────────────────────────────────────────────────────────────*/
+// Impact records (RESS.HQR → BufferImpact) start with a U32 offset table
+// followed by command streams whose 16/32-bit operands are little-endian on
+// disk. Swap on read; the stream is never written back at runtime.
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+#define IMP_RD16(p) ((S16)LBA2_LE16(*(U16 *)(p)))
+#define IMP_RD32(p) ((S32)LBA2_LE32(*(U32 *)(p)))
+#else
+#define IMP_RD16(p) (*(S16 *)(p))
+#define IMP_RD32(p) (*(S32 *)(p))
+#endif
+
 #ifndef COMPILATOR
 #ifdef LBA_EDITOR
 void DoImpact(char *name, S32 x, S32 y, S32 z, U8 owner)
@@ -431,7 +443,7 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
 
     RestoreTimer();
 #else
-    ptr = BufferImpact + *(((U32 *)BufferImpact) + num);
+    ptr = BufferImpact + (U32)IMP_RD32(((U32 *)BufferImpact) + num);
 #endif
 
     if (ptr) {
@@ -445,11 +457,11 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
             switch (command) {
             // SAMPLE nom[.wav] volume
             case IMP_SAMPLE:
-                wword = *(S16 *)ptr; // NumSample
+                wword = IMP_RD16(ptr); // NumSample
                 ptr += 2;
-                wword2 = *(S16 *)ptr; // Frequence
+                wword2 = IMP_RD16(ptr); // Frequence
                 ptr += 2;
-                wlong = *(S16 *)ptr; // Decalage
+                wlong = IMP_RD16(ptr); // Decalage
                 ptr += 2;
                 ParmSampleVolume = *ptr++; // Volume
 
@@ -468,15 +480,15 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
 
             // THROW sprite alpha beta speed poids force
             case IMP_THROW:
-                wword = *(S16 *)ptr; // Sprite
+                wword = IMP_RD16(ptr); // Sprite
                 ptr += 2;
-                wlong = *(S16 *)ptr; // alpha
+                wlong = IMP_RD16(ptr); // alpha
                 ptr += 2;
-                wlong2 = *(S16 *)ptr; // beta
+                wlong2 = IMP_RD16(ptr); // beta
                 ptr += 2;
-                wlong3 = *(S16 *)ptr; // Speed
+                wlong3 = IMP_RD16(ptr); // Speed
                 ptr += 2;
-                wword2 = *(S16 *)ptr; // Poids
+                wword2 = IMP_RD16(ptr); // Poids
                 ptr += 2;
                 wbyte = *ptr++; // Force
 
@@ -506,18 +518,18 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
                 ptr++; // Skip '\0'
                 wword = 0;
 #else
-                wword = *(S16 *)ptr; // num body
+                wword = IMP_RD16(ptr); // num body
                 ptr += 2;
 #endif
-                wlong = *(S16 *)ptr; // alpha
+                wlong = IMP_RD16(ptr); // alpha
                 ptr += 2;
-                wlong2 = *(S16 *)ptr; // beta
+                wlong2 = IMP_RD16(ptr); // beta
                 ptr += 2;
-                wlong3 = *(S16 *)ptr; // Speed
+                wlong3 = IMP_RD16(ptr); // Speed
                 ptr += 2;
-                wword2 = *(S16 *)ptr; // Poids
+                wword2 = IMP_RD16(ptr); // Poids
                 ptr += 2;
-                wword3 = *(S16 *)ptr; // Rotation
+                wword3 = IMP_RD16(ptr); // Rotation
                 ptr += 2;
 
                 wlong2 = (wlong2 + beta) & 4095;
@@ -547,16 +559,16 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
 
             // THROW_POF nom[.pof] alpha beta speed poids scale
             case IMP_THROW_POF:
-                wword = *(S16 *)ptr; // Num Pof
+                wword = IMP_RD16(ptr); // Num Pof
                 ptr += 2;
 
-                wlong = *(S16 *)ptr; // alpha
+                wlong = IMP_RD16(ptr); // alpha
                 ptr += 2;
-                wlong2 = *(S16 *)ptr; // beta
+                wlong2 = IMP_RD16(ptr); // beta
                 ptr += 2;
-                wlong3 = *(S16 *)ptr; // Speed
+                wlong3 = IMP_RD16(ptr); // Speed
                 ptr += 2;
-                wword2 = *(S16 *)ptr; // Poids
+                wword2 = IMP_RD16(ptr); // Poids
                 ptr += 2;
 
                 wlong2 = (wlong2 + beta) & 4095;
@@ -564,7 +576,7 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
                 InitExtraPof(x, y, z, wword,
                              wlong, wlong2,
                              wlong3, wword2,
-                             *(S32 *)ptr, *(S32 *)ptr, 0, // Scale
+                             IMP_RD32(ptr), IMP_RD32(ptr), 0, // Scale
                              0, 0);
 
                 ptr += 4;
@@ -572,13 +584,13 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
 
             // SPRITE deb fin tempo scale transparent
             case IMP_SPRITE:
-                wword = *(S16 *)ptr; // Deb
+                wword = IMP_RD16(ptr); // Deb
                 ptr += 2;
-                wword2 = *(S16 *)ptr; // Fin
+                wword2 = IMP_RD16(ptr); // Fin
                 ptr += 2;
-                wlong = *(S32 *)ptr; // tempo
+                wlong = IMP_RD32(ptr); // tempo
                 ptr += 4;
-                wlong2 = *(S32 *)ptr; // scale
+                wlong2 = IMP_RD32(ptr); // scale
                 ptr += 4;
                 wbyte = *ptr++;  // transparent
                 wbyte2 = *ptr++; // force
@@ -592,13 +604,13 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
             // FLOW_SPRITE nom[.flow] deb fin tempo scale transparent force
             case IMP_FLOW_SPRITE:
                 wbyte = *ptr++;      // num flow
-                wword = *(S16 *)ptr; // deb
+                wword = IMP_RD16(ptr); // deb
                 ptr += 2;
-                wword2 = *(S16 *)ptr; // fin
+                wword2 = IMP_RD16(ptr); // fin
                 ptr += 2;
-                wlong3 = *(S32 *)ptr; // tempo
+                wlong3 = IMP_RD32(ptr); // tempo
                 ptr += 4;
-                wlong2 = *(S32 *)ptr; // scale
+                wlong2 = IMP_RD32(ptr); // scale
                 ptr += 4;
                 wbyte2 = *ptr++; // transparent
                 wlong = *ptr++;  // force
@@ -620,7 +632,7 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
                 ptr++; // Skip '\0'
                 wword = 0;
 #else
-                wword = *(S16 *)ptr; // num body
+                wword = IMP_RD16(ptr); // num body
                 ptr += 2;
 #endif
                 wlong = *ptr++; // force
@@ -636,16 +648,16 @@ void DoImpact(S32 num, S32 x, S32 y, S32 z, U8 owner)
             case IMP_FLOW_POF:
                 wbyte = *ptr++; // Num Flow
 
-                wword = *(S16 *)ptr; // Num Pof
+                wword = IMP_RD16(ptr); // Num Pof
                 ptr += 2;
 
-                wlong = *(S32 *)ptr; // scale_deb
+                wlong = IMP_RD32(ptr); // scale_deb
                 ptr += 4;
-                wlong2 = *(S32 *)ptr; // scale_fin
+                wlong2 = IMP_RD32(ptr); // scale_fin
                 ptr += 4;
-                wlong3 = *(S32 *)ptr; // tempo
+                wlong3 = IMP_RD32(ptr); // tempo
                 ptr += 4;
-                wword2 = *(S16 *)ptr; // SpeedRot
+                wword2 = IMP_RD16(ptr); // SpeedRot
                 ptr += 2;
 
                 CreateExtraParticleFlow(FLOW_EXTRA_POF,

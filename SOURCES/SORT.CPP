@@ -135,12 +135,39 @@ static inline S32 BaseDisplayFirst(void) {
 S32 BaseSort(void) {
     S32 i;
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        extern void LogPrintf(const char *fmt, ...);
+        static int s_first = 1;
+        if (s_first) {
+            LogPrintf("[trace] BaseSort: enter, Base.cElem=%d\n", (int)Base.cElem);
+        }
+        for (i = 0; i < Base.cElem; i++) {
+            if (s_first && i < 16) {
+                LogPrintf("[trace] BaseSort: iter %d, calling BaseDisplayFirst\n", (int)i);
+            }
+            if (BaseDisplayFirst()) {
+                if (s_first) {
+                    LogPrintf("[trace] BaseSort: iter %d returned TRUE -> exit\n", (int)i);
+                    s_first = 0;
+                }
+                return TRUE;
+            }
+        }
+        if (s_first) {
+            LogPrintf("[trace] BaseSort: loop exit normally\n");
+            s_first = 0;
+        }
+        return FALSE;
+    }
+#else
     for (i = 0; i < Base.cElem; i++) {
         if (BaseDisplayFirst())
             return TRUE;
     }
 
     return FALSE;
+#endif
 }
 
 //▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀

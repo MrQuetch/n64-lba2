@@ -29,9 +29,16 @@ void ProjectListIso(TYPE_PT *Dst, TYPE_VT16 *Src, S32 NbPt, S32 OrgX,
         /* The ASM does a 32-bit store at the Z field offset:
 		   mov [vertex+4], edx
 		   Since TYPE_VT16 is packed as X,Y,Z,Grp, this intentionally overwrites
-		   both Z and Grp with the computed sort key. Keep the full-width write to
-		   preserve byte-for-byte behavior. */
-        memcpy(&v->Z, &sortZ, sizeof(sortZ));
+		   both Z and Grp with the computed sort key. On x86 the little-endian
+		   store puts the S32's LOW half on .Z — which is what TestZFar/sphere/
+		   line sorting read back as S16. A raw memcpy on big-endian PPC puts the
+		   HIGH half (0x0000/0xFFFF sign bytes) on .Z instead, collapsing the
+		   whole body into two depth buckets: insertion order then decides the
+		   painter order, so spheres/lines (inserted last) always draw on top
+		   (hair over eyes, hands over shirt). Store the halves explicitly to
+		   keep the LE field semantics on every endianness. */
+        v->Z = (S16)sortZ;
+        v->Grp = (S16)(sortZ >> 16);
 
         S32 newX = XCentre + (((x - z) * 3) >> 6);              // IsoScale
         S32 newY = YCentre + 1 + (((x + z) * 6 - y * 15) >> 8); // IsoScale

@@ -6,6 +6,8 @@
 #include "DIRECTORIES.H"
 #include "INPUT.H"
 
+#include <SYSTEM/wiiu_endian.h>
+
 #include <SVGA/SCREEN.H>
 #include <SYSTEM/KEYBOARD_KEYS.H>
 
@@ -794,9 +796,17 @@ void InitHoloGlobe(S32 planet) {
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, HOLO_HQR_NAME);
 
     BufFleche = (U8 *)LoadHoloMalloc_HQR(tmpFilePath, HQR_FLECHE);
+#ifdef LBA2_TARGET_WIIU
+    // holomap.hqr bodies bypass GivePtrBody (and its one-shot swap): raw LE
+    // straight from disk. Swap before ScaleRotBody3D reads counts/offsets.
+    WiiU_SwapBodyHeader(BufFleche);
+#endif
     ScaleRotBody3D(BufFleche, SCALE_OBJ_GLOBE, TRUE);
 
     BufLoFleche = (U8 *)LoadHoloMalloc_HQR(tmpFilePath, HQR_LOFLECHE);
+#ifdef LBA2_TARGET_WIIU
+    WiiU_SwapBodyHeader(BufLoFleche);
+#endif
     ScaleRotBody3D(BufLoFleche, SCALE_OBJ_GLOBE, TRUE);
 
     //----- Recuperation Body Twinsen et Scale
@@ -819,6 +829,10 @@ void InitHoloGlobe(S32 planet) {
     PtrCoorGlobe = (U16 *)HoloMalloc(SIZE_COOR_GLOBE);
 
     PtrMapping = (U16 *)LoadHoloMalloc_HQR(tmpFilePath, HQR_COORMAPP_HMM); // CoorMapp.HMM
+#ifdef LBA2_TARGET_WIIU
+    // Plain U16 UV array, consumed raw by DrawHolomap.
+    WiiU_SwapU16Array(PtrMapping, HQF_ResSize(tmpFilePath, HQR_COORMAPP_HMM));
+#endif
 
     id = HQR_TWINSUN_HMT + (Planet * 2);
 
@@ -1118,6 +1132,21 @@ void InitHoloMap() {
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, HOLO_HQR_NAME);
     if (!Load_HQR(tmpFilePath, TabArrow, HQR_ARROWBIN))
         TheEndCheckFile(tmpFilePath);
+
+#ifdef LBA2_TARGET_WIIU
+    // T_ARROW records are 7 raw LE S32 (X..Mess) + 4 flag bytes. Swap only
+    // the records the resource actually filled.
+    {
+        U32 nrec = HQF_ResSize(tmpFilePath, HQR_ARROWBIN) / sizeof(T_ARROW);
+        if (nrec > MAX_OBJECTIF + MAX_CUBE)
+            nrec = MAX_OBJECTIF + MAX_CUBE;
+        for (U32 i = 0; i < nrec; i++) {
+            U32 *w = (U32 *)&TabArrow[i];
+            for (U32 j = 0; j < 7; j++)
+                w[j] = LBA2_LE32(w[j]);
+        }
+    }
+#endif
 }
 /*══════════════════════════════════════════════════════════════════════════*/
 void HoloMap() {

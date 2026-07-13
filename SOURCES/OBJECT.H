@@ -1,7 +1,14 @@
 #ifndef OBJECT_H
 #define OBJECT_H
 
+#ifdef LBA2_TARGET_WIIU
+// Function instead of macro on Wii U: OBJFIX.HQR records are LE body files
+// (same T_BODY layout as BODY.HQR) and need the same one-shot header swap
+// GivePtrBody applies — see OBJECT.CPP.
+extern void *GivePtrObjFix(S32 index);
+#else
 #define GivePtrObjFix(index) HQR_Get(HQR_ObjFix, index)
+#endif
 #define GivePtrSample(index, sizeOut) HQR_Get(HQR_Samples, index, sizeOut)
 
 extern Func_TransNumPtr GivePtrAnim;

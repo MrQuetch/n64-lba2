@@ -258,10 +258,20 @@ unsigned long Compress_LZSS(char *input, char *output, unsigned long length) {
             if ((len = len + 2) >= save_length)
                 return (save_length);
 
-            *(short *)write =
-                (short)((MOD_WINDOW(Current_position - Match_position - 1)
-                         << LENGTH_BIT_COUNT) |
-                        (match_length - BREAK_EVEN - 1));
+            // The 16-bit index/length token is little-endian on disk:
+            // ExpandLZ (LIB386/SYSTEM/LZ.CPP) decodes it byte-wise as
+            // byte0 = length nibble + offset low nibble, byte1 = offset
+            // high bits. Writing a native short here broke every save
+            // made on big-endian Wii U (stream decoded to garbage), so
+            // emit the bytes explicitly — identical layout on x86.
+            {
+                unsigned short token =
+                    (unsigned short)((MOD_WINDOW(Current_position - Match_position - 1)
+                                      << LENGTH_BIT_COUNT) |
+                                     (match_length - BREAK_EVEN - 1));
+                write[0] = (char)(token & 0xFF);
+                write[1] = (char)(token >> 8);
+            }
 
             write += 2;
             replace_count = match_length;

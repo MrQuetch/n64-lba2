@@ -72,9 +72,20 @@ U32 TabInputBit[MAX_INPUT * 2 + 1];
 
 T_DEF_KEY GamepadKeys[MAX_INPUT];
 
+// Bump when the default table changes shape: persisted Gamepad%d entries in
+// LBA2.CFG override these defaults, so old cfg files would silently pin the
+// previous scheme forever. ReadGamepadConfig() discards stored bindings whose
+// version is older than this.
+#define GAMEPAD_MAP_VERSION 3
+
 const T_DEF_KEY GamepadKeysDefault[MAX_INPUT] = {
-    {K_GAMEPAD_RTRIGGER, 0},                      // 0  I_UP
-    {K_GAMEPAD_LTRIGGER, 0},                      // 1  I_DOWN
+    // V2 (Wii U): walk fwd/back on the left stick (D-pad mirrors it in the
+    // VPAD stub), triggers kept as secondary. The DC-inherited scheme had
+    // ONLY ZR/ZL here (tank controls forced by the DC pad's analog triggers),
+    // which left stick-up/down dead in gameplay while menus — which read the
+    // VPAD directly via JoystickMenuNavOnly() — kept responding.
+    {K_GAMEPAD_LSTICK_UP, K_GAMEPAD_RTRIGGER},    // 0  I_UP
+    {K_GAMEPAD_LSTICK_DOWN, K_GAMEPAD_LTRIGGER},  // 1  I_DOWN
     {K_GAMEPAD_LSTICK_LEFT, 0},                   // 2  I_LEFT
     {K_GAMEPAD_LSTICK_RIGHT, 0},                  // 3  I_RIGHT
     {K_GAMEPAD_RSHOULDER, 0},                     // 4  I_THROW
@@ -82,11 +93,16 @@ const T_DEF_KEY GamepadKeysDefault[MAX_INPUT] = {
     {K_GAMEPAD_Y, 0},                             // 6  I_INVENTORY
     {K_GAMEPAD_X, 0},                             // 7  I_ACTION_M
     {K_GAMEPAD_A, 0},                             // 8  I_ACTION_ALWAYS
-    {K_GAMEPAD_B, 0},                             // 9  I_RETURN
+    // V3: I_RETURN (camera recenter) moved off B onto R3. B fired the
+    // I_RETURN bit, and DoGameMenu tests Input & I_RETURN as CONFIRM before
+    // it ever reaches the MyKey == K_ESC close check — so B could never
+    // close menus. Same lesson as the DC port: B stays reserved for
+    // menu-close UX (MyGetInput maps it to K_ESC while AsciiMode is set).
+    {K_GAMEPAD_RSTICK_BTN, 0},                    // 9  I_RETURN (was K_GAMEPAD_B)
     {K_GAMEPAD_START, 0},                         // 10 I_MENUS
     {K_GAMEPAD_BACK, 0},                          // 11 I_HOLOMAP
     {0, 0},                                       // 12 I_PAUSE (unbound; Start opens the in-game menu)
-    {K_GAMEPAD_LSTICK_BTN, K_GAMEPAD_RSTICK_BTN}, // 13 I_ESQUIVE
+    {K_GAMEPAD_LSTICK_BTN, 0},                    // 13 I_ESQUIVE (R3 freed for I_RETURN)
     {0, 0},                                       // 14 I_NORMAL
     {0, 0},                                       // 15 I_SPORTIF
     {0, 0},                                       // 16 I_AGRESSIF
@@ -121,20 +137,39 @@ const T_DEF_KEY GamepadKeysDefault[MAX_INPUT] = {
  *══════════════════════════════════════════════════════════════════════════*/
 
 //-------------------------------------------------------------------------
+// Combined keyboard+gamepad binding table fed to GetInput(). Both device
+// families must flow through the same rebuild+norepeat pipeline: the old
+// scheme OR'd pad bits into Input AFTER GetInput (ApplyGamepadBindings),
+// which (a) bypassed the InitWaitNoInput norepeat latch — a held pad button
+// re-fired instantly, reopening the inventory on close — and (b) meant any
+// mid-frame GetInput call (e.g. InitWaitNoInput(I_RETURN) after the camera
+// recenter) rebuilt Input from keyboard only, wiping pad-held movement bits
+// for the rest of the frame and halting the run.
+static U32 CombinedKeys[MAX_INPUT * 4];
+static U32 CombinedMasks[MAX_INPUT * 4];
+
 void InitInput(void) {
-    U32 mask;
+    U32 n = 0;
 
-    for (NbInput = 0; NbInput < MAX_INPUT * 2;) {
-        mask = (1 << (NbInput / 2));
+    // Only the first 32 action slots map to Input bits (same clamp as the
+    // original 64-entry keyboard table); slots 32-35 are spell actions the
+    // engine never reads through the Input path.
+    for (U32 a = 0; a < 32 && a < MAX_INPUT; a++) {
+        U32 mask = (1u << a);
 
-        TabInputBit[NbInput++] = mask;
-        TabInputBit[NbInput++] = mask;
+        CombinedKeys[n] = DefKeys[a].Key1;
+        CombinedMasks[n++] = mask;
+        CombinedKeys[n] = DefKeys[a].Key2;
+        CombinedMasks[n++] = mask;
+        CombinedKeys[n] = GamepadKeys[a].Key1;
+        CombinedMasks[n++] = mask;
+        CombinedKeys[n] = GamepadKeys[a].Key2;
+        CombinedMasks[n++] = mask;
     }
 
-    if (NbInput > 64)
-        NbInput = 64;
+    NbInput = n;
 
-    DefineInputKeys(NbInput, (U32 *)DefKeys, TabInputBit);
+    DefineInputKeys(NbInput, CombinedKeys, CombinedMasks);
 }
 
 //-------------------------------------------------------------------------
@@ -210,6 +245,15 @@ void ReadGamepadConfig(void) {
     if (JoystickDeadzone > 32767)
         JoystickDeadzone = 32767;
 
+    // Stored bindings written by an older default table are stale: keep the
+    // compiled-in defaults instead. They get re-persisted (with the new
+    // version) at the next WriteConfigFile().
+    if (DefFileBufferReadValueDefault("GamepadMapVersion", 1) < GAMEPAD_MAP_VERSION) {
+        memcpy(GamepadKeys, GamepadKeysDefault, sizeof(GamepadKeys));
+        InitInput(); // rebuild the combined key table with these bindings
+        return;
+    }
+
     char id[32];
     for (S32 n = 0; n < MAX_INPUT; n++) {
         snprintf(id, sizeof(id), "Gamepad%d", n);
@@ -219,6 +263,8 @@ void ReadGamepadConfig(void) {
         GamepadKeys[n].Key2 =
             DefFileBufferReadValueDefault(id, GamepadKeysDefault[n].Key2);
     }
+
+    InitInput(); // rebuild the combined key table with these bindings
 }
 
 //-------------------------------------------------------------------------
@@ -227,6 +273,7 @@ void WriteGamepadConfig(void) {
         return;
 
     DefFileBufferWriteValue("GamepadDeadzone", JoystickDeadzone);
+    DefFileBufferWriteValue("GamepadMapVersion", GAMEPAD_MAP_VERSION);
 
     char id[32];
     for (S32 n = 0; n < MAX_INPUT; n++) {
@@ -238,27 +285,9 @@ void WriteGamepadConfig(void) {
 }
 
 //-------------------------------------------------------------------------
-// OR gamepad-bound contributions into the global Input bitfield. Only the
-// first 32 action slots map to bits in Input (matching the NbInput=64 clamp
-// applied by GetInput()); slots 32-35 are reserved for spells that the
-// engine never reads through the Input path.
-void ApplyGamepadBindings(void) {
-    if (!JoystickIsPresent())
-        return;
-    for (S32 n = 0; n < 32; n++) {
-        U32 k1 = GamepadKeys[n].Key1;
-        U32 k2 = GamepadKeys[n].Key2;
-        if ((k1 != 0 && CheckKey(k1)) || (k2 != 0 && CheckKey(k2))) {
-            Input |= (1u << n);
-        }
-    }
-}
-
-//-------------------------------------------------------------------------
 void MyGetInput() {
     GetJoys((U32 *)&TabKeys[256]);
-    GetInput(0); // no norepeat keys
-    ApplyGamepadBindings();
+    GetInput(0); // no norepeat keys; pad bindings live in the same table
 
     MyKey = Key;
     // Gamepad "press any key" parity: if no keyboard key was pressed this
@@ -268,6 +297,15 @@ void MyGetInput() {
     // they can't collide with existing MyKey == K_FOO keyboard branches.
     if (!MyKey) {
         MyKey = (S32)JoystickFirstPressedScancode();
+    }
+
+    // In menu mode (AsciiMode is set by DoGameMenu/selector loops and
+    // cleared for gameplay) the pad B button acts as ESC so menus can be
+    // closed: every menu exit path tests MyKey == K_ESC, which no gamepad
+    // scancode ever equals. Gameplay is untouched — there B stays I_RETURN
+    // (camera recenter) through the binding table.
+    if (AsciiMode AND MyKey == K_GAMEPAD_B) {
+        MyKey = K_ESC;
     }
 
     /* Reserve configured console toggle key from gameplay so toggle isn't handled twice. */

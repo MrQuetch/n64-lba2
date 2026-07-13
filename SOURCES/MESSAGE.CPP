@@ -15,6 +15,12 @@
 
 #include "INPUT.H"
 
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/LOGPRINT.H>
+#include <SYSTEM/wiiu_endian.h>
+extern "C" void WiiU_AnimsCanary(const char *where);
+#endif
+
 #include <SVGA/SCREEN.H>
 #include <SVGA/VIDEO.H>
 #include "DIRECTORIES.H"
@@ -137,9 +143,9 @@ S32 LastFileInit = -1;
 const char *TabLanguage[] = {
     //      Ne pas toucher l'ordre cause HQR
     "English",
-    "Français",
+    "Fran\x87" "ais",
     "Deutsch",
-    "Español",
+    "Espa\xA4ol",
     "Italiano",
     "Portugues"};
 
@@ -731,7 +737,19 @@ void InitFileNar(char *file, S32 from) {
     while (!offset) // Sans Filet
     {
         Read(FdNar, &offset, 4L);
+#ifdef LBA2_TARGET_WIIU
+        // VOX/NAR files are LE on disk (x86 retail). On PPC the raw read is
+        // byte-swapped: without this fix, `offset` becomes huge (e.g. 16 ->
+        // 0x10000000 = 256 MB), and the subsequent Read(FdNar, BufMemoSeek,
+        // offset) blasts >2KB worth of voice index table across global
+        // memory, overwriting HQR_Anims and other later allocations.
+        offset = LBA2_LE32(offset);
+#endif
     }
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[InitFileNar] file='%s' from=%d swapped offset=%u (BufMemoSeek=%p)\n",
+              file, (int)from, (unsigned)offset, (void *)BufMemoSeek);
+#endif
 
     MaxVoice = (offset / 4) - 1; // Normalement en phase
                                  // avec MaxText mais bon,
@@ -818,6 +836,17 @@ void PlaySpeakVoc(S32 fd) {
     Read(fd, &size, 4L);
     Read(fd, &sizelzss, 4L);
     Read(fd, &method, 2L);
+
+#ifdef LBA2_TARGET_WIIU
+    // VOX voice records are LE on disk (x86 retail). Raw on PPC, `method`
+    // (S16) reads back as 0x0100 so the ExpandLZ branch is always taken, and
+    // `size`/`sizelzss` (S32) become multi-hundred-MB — Read(fd, ScreenAux,
+    // sizelzss) then blasts global memory (seen as HQR_Get "buffer trop
+    // petit" with a garbage header once voices are enabled).
+    size = LBA2_LE32(size);
+    sizelzss = LBA2_LE32(sizelzss);
+    method = LBA2_LE16(method);
+#endif
 
     if (method == 0) {
         Read(fd, BufSpeak, size);
@@ -991,6 +1020,12 @@ S32 Speak(S32 text) {
         return (0L); //     Ne doit pas arrivé,
                      //     sauf en cours de dvp...
     offset = BufMemoSeek[num];
+#ifdef LBA2_TARGET_WIIU
+    // BufMemoSeek is the VOX voice index: U32 LE seek offsets read raw from
+    // disk. Unswapped, Seek(FdNar, offset) lands at a garbage file position
+    // and PlaySpeakVoc reads junk sizes.
+    offset = LBA2_LE32(offset);
+#endif
 
     if (!offset)
         return (0L);
@@ -1073,16 +1108,61 @@ void InitDial(S32 file) {
     LastFileInit = file;
 
     GetResPath(FileText, ADELINE_MAX_PATH, TEXT_HQR_NAME);
-    MaxText = (U16)(Load_HQR(FileText, BufOrder,
-                             (Language * MAX_TEXT_LANG * 2) + (file * 2) + 0) /
-                    2);
+#ifdef LBA2_TARGET_WIIU
+    WiiU_AnimsCanary("InitDial: before Load_HQR(BufOrder)");
+    LogPrintf("[InitDial] file=%d Language=%d index_ord=%d BufOrder=%p BufText=%p\n",
+              (int)file, (int)Language,
+              (int)((Language * MAX_TEXT_LANG * 2) + (file * 2) + 0),
+              (void *)BufOrder, (void *)BufText);
+#endif
+    U32 ord_size = Load_HQR(FileText, BufOrder,
+                            (Language * MAX_TEXT_LANG * 2) + (file * 2) + 0);
+    MaxText = (U16)(ord_size / 2);
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[InitDial] BufOrder Load_HQR returned size=%u (BIG_FILE_ORD=%d)\n",
+              (unsigned)ord_size, (int)BIG_FILE_ORD);
+    WiiU_AnimsCanary("InitDial: after Load_HQR(BufOrder)");
+    // BufOrder is a flat U16 array of text numbers (LE on disk); FindText
+    // compares entries raw, so unswapped no sentence ever matches → menus
+    // and dialogs render as empty bars.
+    for (U32 i = 0; i < (U32)MaxText; i++) {
+        BufOrder[i] = LBA2_LE16(BufOrder[i]);
+    }
+#endif
 
-    Load_HQR(FileText, BufText,
-             (Language * MAX_TEXT_LANG * 2) + (file * 2) + 1);
+    U32 text_size = Load_HQR(FileText, BufText,
+                             (Language * MAX_TEXT_LANG * 2) + (file * 2) + 1);
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[InitDial] BufText Load_HQR returned size=%u (BIG_FILE_DIA=%d)\n",
+              (unsigned)text_size, (int)BIG_FILE_DIA);
+    WiiU_AnimsCanary("InitDial: after Load_HQR(BufText)");
+    // BufText starts with a U16 offset table (GetText reads entries
+    // [0..MaxText]); the string bytes that follow need no swap.
+    {
+        U16 *offTab = (U16 *)BufText;
+        for (U32 i = 0; i <= (U32)MaxText; i++) {
+            offTab[i] = LBA2_LE16(offTab[i]);
+        }
+    }
+#endif
 
 #ifdef CDROM
-    if (FlagSpeak)
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[InitDial] FlagSpeak=%d, will call InitSpeak: %s\n",
+              (int)FlagSpeak, FlagSpeak ? "yes" : "no");
+#endif
+    if (FlagSpeak) {
+#ifdef LBA2_TARGET_WIIU
+        WiiU_AnimsCanary("InitDial: before InitSpeak");
+#endif
         InitSpeak(file);
+#ifdef LBA2_TARGET_WIIU
+        WiiU_AnimsCanary("InitDial: after InitSpeak");
+#endif
+    }
+#endif
+#ifdef LBA2_TARGET_WIIU
+    WiiU_AnimsCanary("InitDial: end of function");
 #endif
 }
 /*-------------------------------------------------------------------------*/

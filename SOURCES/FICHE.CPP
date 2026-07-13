@@ -1,5 +1,11 @@
 #include "C_EXTERN.H"
 
+#include <SYSTEM/LOGPRINT.H>
+
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+#endif
+
 /*══════════════════════════════════════════════════════════════════════════*
 		      ██▀▀▀ █▀▀▀▀ █▀▀▀█  █    █▀▀▀█ ▀▀█▀▀
 		      ▀▀▀▀█ ██    ██▀█▀  ██   ██▀▀▀   ██
@@ -287,12 +293,26 @@ void InitBodyZV(T_OBJET *ptrobj) {
 /* recherche des options d'anims */
 
 #define GET_S8 (*ptrc++)
+// Fiche anim-action operands are little-endian on disk; the loader half of
+// this file (line ~980 onward) already swaps its reads, this half was
+// missed — unswapped F_ZV reads garbage the object's bounding box on every
+// anim change (walk anim → absurd bbox → TreeInsert preclip rejects the
+// model → it vanishes the moment it starts walking).
+#ifdef LBA2_TARGET_WIIU
+#define GET_S16                       \
+    ((S16)LBA2_LE16(*(U16 *)ptrc));   \
+    ptrc += 2
+#define GET_S32                       \
+    ((S32)LBA2_LE32(*(U32 *)ptrc));   \
+    ptrc += 4
+#else
 #define GET_S16     \
     (*(S16 *)ptrc); \
     ptrc += 2
 #define GET_S32     \
     (*(S32 *)ptrc); \
     ptrc += 4
+#endif
 
 void GereAnimAction(T_OBJET *ptrobj, U8 numobj) {
     T_EXTRA *ptrextra = NULL;
@@ -379,7 +399,7 @@ void GereAnimAction(T_OBJET *ptrobj, U8 numobj) {
 
         case F_SAMPLE:
             if (testframe == *ptrc++) {
-                HQ_3D_MixSample(*(S16 *)ptrc, 0x1000, 0, 1,
+                HQ_3D_MixSample((S16)LBA2_LE16(*(U16 *)ptrc), 0x1000, 0, 1,
                                 ptrobj->Obj.X, ptrobj->Obj.Y, ptrobj->Obj.Z);
             }
             ptrc += 2;
@@ -971,14 +991,17 @@ S32 SearchAnim(U16 numanim, S32 numobj) {
     while ((command = *ptrc++) != 255) {
         switch (command) {
         case F_ANIM:
-            numgene = *(U16 *)ptrc; // lit num name generique
+            // PtrFile3D body content is LE on disk; numgene is U16 LE.
+            numgene = LBA2_LE16(*(U16 *)ptrc); // lit num name generique
             ptrc += 2;
 
             if (numanim == numgene) // ok trouve
             {
                 ptrc++; // saute size anim
 
-                hqranim = *(S16 *)ptrc;
+                // hqranim is S16 LE — without swap, returned index is garbage
+                // and HQR_Get() picks an out-of-range record.
+                hqranim = (S16)LBA2_LE16(*(U16 *)ptrc);
 
                 ptrc += 2;
 
@@ -1008,13 +1031,45 @@ S32 SearchBody(U8 numbody, S32 numobj) {
     S32 hqrbody;
     U8 *ptrc;
     U8 numgene;
+#ifdef LBA2_TARGET_WIIU
+    U8 *ptrc_start;
+    S32 iter_count = 0;
+    const S32 ITER_CAP = 100000;
+#endif
 
     ptrobj = &ListObjet[numobj];
     ptrc = ptrobj->PtrFile3D;
 
+#ifdef LBA2_TARGET_WIIU
+    ptrc_start = ptrc;
+    if (numobj != NUM_PERSO) {
+        LogPrintf("[SearchBody] numobj=%d numbody=%u PtrFile3D=%p first16=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                  (int)numobj, (unsigned)numbody, (void*)ptrc,
+                  ptrc[0], ptrc[1], ptrc[2], ptrc[3],
+                  ptrc[4], ptrc[5], ptrc[6], ptrc[7],
+                  ptrc[8], ptrc[9], ptrc[10], ptrc[11],
+                  ptrc[12], ptrc[13], ptrc[14], ptrc[15]);
+    }
+#endif
+
     SearchPtrAnimAction = 0;
 
     while ((command = *ptrc++) != 255) {
+#ifdef LBA2_TARGET_WIIU
+        if (++iter_count > ITER_CAP) {
+            U8 *p = ptrc_start;
+            LogPrintf("[SearchBody] OVERFLOW after %d iters numobj=%d numbody=%u offset=%ld\n",
+                      (int)iter_count, (int)numobj, (unsigned)numbody,
+                      (long)(ptrc - ptrc_start));
+            LogPrintf("[SearchBody] PtrFile3D=%p first32=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                      (void*)p,
+                      p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
+                      p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15],
+                      p[16], p[17], p[18], p[19], p[20], p[21], p[22], p[23],
+                      p[24], p[25], p[26], p[27], p[28], p[29], p[30], p[31]);
+            return -1;
+        }
+#endif
         switch (command) {
         case F_BODY:
             numgene = *ptrc++; // lit num name generique
@@ -1023,7 +1078,10 @@ S32 SearchBody(U8 numbody, S32 numobj) {
             {
                 ptrc++; // saute size anim
 
-                hqrbody = *(S16 *)ptrc;
+                // PtrFile3D body content fields are LE on disk; on PPC each
+                // S16 read must be byte-swapped or the resulting hqrbody is
+                // garbage and HQR_Get(HQR_Bodys, garbage) trashes the pool.
+                hqrbody = (S16)LBA2_LE16(*(U16 *)ptrc);
 
                 ptrc += 2;
 
@@ -1032,17 +1090,17 @@ S32 SearchBody(U8 numbody, S32 numobj) {
                 if (*ptrc++) // body possede action ?
                 {
                     if (*ptrc++ == F_ZV) {
-                        M_XMin = *(S16 *)ptrc;
+                        M_XMin = (S16)LBA2_LE16(*(U16 *)ptrc);
                         ptrc += 2;
-                        M_YMin = *(S16 *)ptrc;
+                        M_YMin = (S16)LBA2_LE16(*(U16 *)ptrc);
                         ptrc += 2;
-                        M_ZMin = *(S16 *)ptrc;
+                        M_ZMin = (S16)LBA2_LE16(*(U16 *)ptrc);
                         ptrc += 2;
-                        M_XMax = *(S16 *)ptrc;
+                        M_XMax = (S16)LBA2_LE16(*(U16 *)ptrc);
                         ptrc += 2;
-                        M_YMax = *(S16 *)ptrc;
+                        M_YMax = (S16)LBA2_LE16(*(U16 *)ptrc);
                         ptrc += 2;
-                        M_ZMax = *(S16 *)ptrc;
+                        M_ZMax = (S16)LBA2_LE16(*(U16 *)ptrc);
                         ptrc += 2;
                     }
                 }

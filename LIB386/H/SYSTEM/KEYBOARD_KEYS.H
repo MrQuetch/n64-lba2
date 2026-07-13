@@ -1,7 +1,11 @@
 #pragma once
 
 // TODO: Create mapping behind functions, so SDL is not exposed to global scope
-#include <SDL3/SDL_keycode.h>
+#ifdef LBA2_TARGET_WIIU
+#  include "wiiu_scancodes.h"
+#else
+#  include <SDL3/SDL_keycode.h>
+#endif
 
 // -----------------------------------------------------------------------------
 #define K_UP SDL_SCANCODE_UP

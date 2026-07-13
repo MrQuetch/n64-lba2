@@ -1,6 +1,10 @@
 #include "C_EXTERN.H"
 #include "DIRECTORIES.H"
 
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+#endif
+
 /*══════════════════════════════════════════════════════════════════════════*
 	     █▀▀▀█ █▀▀▀█ █▀▀▀█ ▀▀█▀▀  █    █▀▀▀▀ █     █▀▀▀▀ ██▀▀▀
 	     ██▀▀▀ ██▀▀█ ██▀█▀   ██   ██   ██    ██    ██▀▀  ▀▀▀▀█
@@ -109,7 +113,29 @@ U32 InitPartFlow() {
     BoxUpdate();
 #else
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, RESS_HQR_NAME);
+#ifdef LBA2_TARGET_WIIU
+    {
+        // RESS_FLOW è un array raw di T_FLOW scritto LE dall'editor x86:
+        // 15 S16 contigui (Alpha..Bank) + Coul/Range U8 + Flags U32.
+        // Senza swap NbDot/Speed/Ouverture escono byte-flipped e i flow
+        // spawnano zero punti o garbage (cuoricini/nuvolette invisibili).
+        U32 flowSize = Load_HQR(tmpFilePath, TabPartFlow, RESS_FLOW);
+        S32 nflows = (S32)(flowSize / sizeof(T_FLOW));
+        T_FLOW *fl = TabPartFlow;
+
+        for (n = 0; n < nflows; n++, fl++) {
+            U16 *s = (U16 *)fl;
+            S32 i;
+
+            for (i = 0; i < 15; i++) // Alpha..Bank
+                s[i] = LBA2_LE16(s[i]);
+
+            fl->Flags = LBA2_LE32(fl->Flags);
+        }
+    }
+#else
     Load_HQR(tmpFilePath, TabPartFlow, RESS_FLOW);
+#endif
 #endif
 
 #ifdef LBA_EDITOR

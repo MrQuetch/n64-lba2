@@ -4,6 +4,21 @@
 #include <SVGA/CLIP.H>
 #include <SVGA/SCREEN.H>
 
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+// Sprite banks (SPRITES.HQR / SPRIRAW.HQR / ANIM3DS.HQR records) start with a
+// LE U32 offset table; the pixel payload after it is byte-only (RLE/raw), so
+// the table is the only thing to swap. Banks built at runtime in host order
+// (e.g. BufferBrick) pass through untouched: WiiU_SwapHqrSubOffsetTable
+// validates tab[0] as a plausible LE table start and a host-order (or already
+// swapped) first entry byte-reverses to a huge value that fails the check.
+// HQR cache eviction reloads records LE from disk, so the swap must live at
+// the consumer entry points, not at a one-time load site.
+#define WIIU_FIX_BANK_TABLE(bank) WiiU_SwapHqrSubOffsetTable((unsigned char *)(bank))
+#else
+#define WIIU_FIX_BANK_TABLE(bank) ((void)0)
+#endif
+
 // -----------------------------------------------------------------------------
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +53,7 @@ U8 BufferClip[512];
 
 // -----------------------------------------------------------------------------
 S32 GetDxDyGraph(U8 numgraph, S32 *x, S32 *y, const void *bankgraph) {
+    WIIU_FIX_BANK_TABLE(bankgraph);
     const U32 *graphMem = (const U32 *)bankgraph;
     const U8 *graphBytes = (const U8 *)bankgraph;
 
@@ -57,11 +73,25 @@ S32 ClippingGraph(S32 x0, S32 y0, S32 x1, S32 y1, U8 *graphics);
 
 S32 AffGraph(S32 numgraph, S32 x, S32 y, const void *bankgraph) {
     LIB386_TRACE_CPP("AffGraph", "1", "num=%d x=%d y=%d bank=%p", numgraph, x, y, (void *)bankgraph);
+    WIIU_FIX_BANK_TABLE(bankgraph);
     U8 *data = (U8 *)bankgraph + ((U32 *)bankgraph)[numgraph];
     U8 deltaX = data[0];
     U8 nbLine = data[1]; // delta Y
     S8 hotX = data[2];
     S8 hotY = data[3];
+#ifdef LBA2_TARGET_WIIU
+    {
+        extern void LogPrintf(const char *fmt, ...);
+        static int s_affgraph_n = 0;
+        if (s_affgraph_n < 3) {
+            U32 *tab = (U32 *)bankgraph;
+            LogPrintf("[AffGraph] num=%d offset=0x%08X data=%p deltaX=%u nbLine=%u hotX=%d hotY=%d\n",
+                      (int)numgraph, (unsigned)tab[numgraph], (void*)data,
+                      (unsigned)deltaX, (unsigned)nbLine, (int)hotX, (int)hotY);
+            s_affgraph_n++;
+        }
+    }
+#endif
 
     U8 *graphics = data + 4;
 
@@ -240,6 +270,7 @@ S32 ClippingGraph(S32 x0, S32 y0, S32 x1, S32 y1, U8 *graphics) {
 
 S32 GetBoxGraph(S32 numgraph, S32 *x0, S32 *y0, S32 *x1, S32 *y1,
                 const void *bankgraph) {
+    WIIU_FIX_BANK_TABLE(bankgraph);
     U8 *bank = (U8 *)bankgraph + ((U32 *)bankgraph)[numgraph];
 
     U8 dx = bank[0];

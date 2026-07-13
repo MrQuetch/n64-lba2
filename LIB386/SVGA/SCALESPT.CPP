@@ -5,6 +5,14 @@
 #include <stdio.h>
 #include <SYSTEM/DEBUG_TRACES.H>
 
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+// LE U32 offset table at the bank head — see GRAPH.CPP for the rationale.
+#define WIIU_FIX_BANK_TABLE(bank) WiiU_SwapHqrSubOffsetTable((unsigned char *)(bank))
+#else
+#define WIIU_FIX_BANK_TABLE(bank) ((void)0)
+#endif
+
 // Sprite structure - matches the ASM definition
 struct SpriteStruct {
     U8 deltaX;
@@ -54,6 +62,7 @@ void ScaleSpriteTransp(S32 num, S32 x, S32 y, S32 factorx, S32 factory,
         factory = 0x7FFFFFFF;
     }
 
+    WIIU_FIX_BANK_TABLE(ptrbank);
     U32 *bank = (U32 *)ptrbank;
     U8 *spritePtr = (U8 *)ptrbank + bank[num];
     SpriteStruct *sprite = (SpriteStruct *)spritePtr;

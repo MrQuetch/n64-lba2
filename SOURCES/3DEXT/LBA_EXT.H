@@ -137,6 +137,25 @@ typedef struct {
 
 //****************************************************************************
 // structure map poly mode jeu ( 32 Bits)
+#ifdef LBA2_TARGET_WIIU
+// Big-endian PPC: GCC allocates bitfields MSB-first, x86 LSB-first. The GRD
+// record is byte-swapped once at load (LoadCube, gated on HQR_Flag) so the
+// U32 *value* matches x86; the field list must then be mirrored so each field
+// lands on the same bits of that value (Bank = bits 0-3, ... IndexTex = 19-31).
+typedef	struct	{
+
+		U32	IndexTex	:13 ;	// index texture 8192
+		U32	Dummy		:1 ;
+		U32	Col		:1 ;
+		U32	Sens		:1 ;	// sens diagonale
+		U32	CodeJeu		:4 ;	// code jeu
+		U32	SampleStep	:4 ;	// sample pas twinsen
+		U32	PolyFlag	:2 ;	// flag poly 00 rien 01 flat 10 gouraud 11 dither
+		U32	TexFlag		:2 ;	// flag texture 00 rien 01 triste 10 flat 11 gouraud
+		U32	Bank		:4 ;	// coul bank poly
+
+		}	T_HALF_POLY ;		// 1 long
+#else
 typedef	struct	{
 
 		U32	Bank		:4 ;	// coul bank poly
@@ -150,6 +169,7 @@ typedef	struct	{
 		U32	IndexTex	:13 ;	// index texture 8192
 
 		}	T_HALF_POLY ;		// 1 long
+#endif
 
 typedef struct	{
 

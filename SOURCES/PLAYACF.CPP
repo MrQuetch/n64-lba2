@@ -9,7 +9,13 @@
 #include <AIL/VIDEO_AUDIO.H>
 #include <AIL/VIDEO_AUDIO_RESAMPLE.H>
 
+#ifdef LBA2_TARGET_WIIU
+// On by default: the in-game console that would toggle this is stubbed on
+// Wii U, and FMV bring-up needs the [VIDEO] trail in the engine log.
+static int videoLogEnabled = 1;
+#else
 static int videoLogEnabled = 0;
+#endif
 
 void VideoLogEnable(int enable) {
     videoLogEnabled = (enable != 0) ? 1 : 0;
@@ -23,7 +29,7 @@ int VideoLogIsEnabled(void) {
 #include <SVGA/VIDEO.H>
 #include <SYSTEM/KEYBOARD_KEYS.H>
 #include <SYSTEM/LOGPRINT.H>
-#include <SDL3/SDL.h>
+#include <SYSTEM/wiiu_sdl_compat.h> // pass-through to <SDL3/SDL.h> off Wii U
 #include <stdio.h>
 #include <string.h>
 #include "CONSOLE/CONSOLE.H"
@@ -318,6 +324,43 @@ static void PushCurrentFrameVideoAudio(smk smkObject, const int *tracksToPlay, i
 
 //---------------------------------------------------------------------------
 
+#if defined(USE_MVIDEO_SMACKER) && defined(LBA2_TARGET_WIIU)
+/* Open the HQR and leave the FILE* positioned on entry `index`'s raw SMK
+   payload (10-byte entry header skipped). VIDEO.HQR stores movies
+   uncompressed, so libsmacker's disk mode can stream them frame by frame —
+   the intro alone is 76 MB, far beyond the 32 MB leak-on-free engine pool
+   that LoadMalloc_HQR draws from on Wii U. Table offsets and the entry
+   header are little-endian on disk; bytes are composed explicitly so the
+   reads are endian-safe on PPC. Returns NULL if the entry is missing or
+   compressed (caller falls back to the fatal no-CD message, same as a
+   failed LoadMalloc_HQR). */
+static FILE *WiiU_HqrEntryOpenStream(const char *path, S32 index) {
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return NULL;
+    U8 b[10];
+    int ok = (fread(b, 1, 4, f) == 4);
+    if (ok) {
+        U32 tabBytes = (U32)b[0] | ((U32)b[1] << 8) | ((U32)b[2] << 16) | ((U32)b[3] << 24);
+        ok = ((U32)index * 4u < tabBytes);
+    }
+    ok = ok && (fseek(f, (long)index * 4, SEEK_SET) == 0) && (fread(b, 1, 4, f) == 4);
+    if (ok) {
+        U32 off = (U32)b[0] | ((U32)b[1] << 8) | ((U32)b[2] << 16) | ((U32)b[3] << 24);
+        ok = (off != 0) && (fseek(f, (long)off, SEEK_SET) == 0) && (fread(b, 1, 10, f) == 10);
+    }
+    if (ok) {
+        U16 mode = (U16)((U16)b[8] | ((U16)b[9] << 8));
+        ok = (mode == 0); /* compressed entries can't be streamed */
+    }
+    if (!ok) {
+        fclose(f);
+        return NULL;
+    }
+    return f;
+}
+#endif
+
 S32 PlayAcf(const char *name) {
 #ifdef USE_MVIDEO_SMACKER
     {
@@ -358,6 +401,23 @@ S32 PlayAcf(const char *name) {
             memcpy(savedPal, PtrPal, palSize);
         }
 
+#ifdef LBA2_TARGET_WIIU
+        FILE *smkFile = WiiU_HqrEntryOpenStream(PathAcf, n);
+        if (!smkFile) {
+            if (VideoLogIsEnabled())
+                SDL_Log("[VIDEO] PlayAcf: cannot stream entry %d from %s", (int)n, PathAcf);
+            TheEnd(PROGRAM_OK, MessageNoCD);
+        }
+
+        /* smk_open_filepointer owns the FILE* from here on: it fcloses it
+           both on open failure and in smk_close. */
+        smk smkObject = smk_open_filepointer(smkFile, SMK_MODE_DISK);
+        if (!smkObject) {
+            if (VideoLogIsEnabled())
+                SDL_Log("[VIDEO] PlayAcf: smk_open_filepointer failed for index %d", (int)n);
+            TheEnd(PROGRAM_OK, MessageNoCD);
+        }
+#else
         U8 *decompbuf = (U8 *)LoadMalloc_HQR(PathAcf, n);
         U32 size = LoadMallocFileSize;
         if (!size) {
@@ -373,6 +433,7 @@ S32 PlayAcf(const char *name) {
             Free(decompbuf);
             TheEnd(PROGRAM_OK, MessageNoCD);
         }
+#endif
 
         SetBlackPal();
         BoxReset();
@@ -388,7 +449,9 @@ S32 PlayAcf(const char *name) {
         smk_info_video(smkObject, &w, &h, NULL);
         if (w != 320 || h != 200) {
             smk_close(smkObject);
+#ifndef LBA2_TARGET_WIIU
             Free(decompbuf);
+#endif
             TheEnd(PROGRAM_FAIL, "Unsupported video format (320x200 only)");
         }
 
@@ -454,7 +517,9 @@ S32 PlayAcf(const char *name) {
         if (!dest) {
             StopVideoAudio();
             smk_close(smkObject);
+#ifndef LBA2_TARGET_WIIU
             Free(decompbuf);
+#endif
             if (savedLog)
                 free(savedLog);
             HQ_ResumeSamples();
@@ -547,7 +612,9 @@ S32 PlayAcf(const char *name) {
         StopVideoAudio();
         smk_close(smkObject);
         free(dest);
+#ifndef LBA2_TARGET_WIIU
         Free(decompbuf);
+#endif
 
         /* Restore screen and palette so we don't leave a black screen. */
         if (savedLog && Log && PtrPal) {

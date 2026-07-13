@@ -9,6 +9,9 @@
 
 #include <SVGA/SCREEN.H>
 #include "DIRECTORIES.H"
+#ifdef LBA2_TARGET_WIIU
+#include <SYSTEM/wiiu_endian.h>
+#endif
 
 extern U8 *BufferSmack; // tempo ?
 
@@ -53,7 +56,14 @@ void AdjustLba2Mem(void) {
     // Load size plus grosse Scene
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, SCENE_HQR_NAME);
     Load_HQR(tmpFilePath, &PtrSceneMem, 0);
-
+#ifdef LBA2_TARGET_WIIU
+    // scene.hqr record 0 stores the largest scene size as a single U32 in
+    // little-endian (x86 retail format). On PPC big-endian the value gets
+    // read byte-swapped; without this fix, MainBuffer's allocation explodes
+    // into the GB range and fails. The HQR loader fix in HQFILE.CPP only
+    // handles header fields; record contents are application-level data.
+    PtrSceneMem = LBA2_LE32(PtrSceneMem);
+#endif
     PtrSceneMem += RECOVER_AREA;
 
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, RESS_HQR_NAME);
@@ -71,6 +81,9 @@ void AdjustHQRMem(void) {
     char tmpFilePath[ADELINE_MAX_PATH];
 
     memory = AvailableMem();
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[AdjustHQRMem] mem=%lu MB", (unsigned long)(memory / (1024UL*1024UL)));
+#endif
 
     SpriteMem = (memory / 32);
     Anim3DSMem = (memory / 16);
@@ -84,7 +97,26 @@ void AdjustHQRMem(void) {
     islemem = (memory / 16) * 2 /*+(memory/32)*/;
 
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, RESS_HQR_NAME);
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[AdjustHQRMem] Load_HQR sizeinfo from %s", tmpFilePath);
+#endif
     Load_HQR(tmpFilePath, &sizeinfo, RESS_EXT_SIZE_INFO);
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[AdjustHQRMem] sizeinfo raw=%08lx %08lx %08lx %08lx",
+              (unsigned long)(U32)sizeinfo.MaxSizeListDecors,
+              (unsigned long)(U32)sizeinfo.MaxSizeBodyDecors,
+              (unsigned long)(U32)sizeinfo.MaxSizeTexDef,
+              (unsigned long)(U32)sizeinfo.MaxTotalBodyDecors);
+#endif
+#ifdef LBA2_TARGET_WIIU
+    // RESS_EXT_SIZE_INFO record is 4 packed S32 fields (LE x86 retail format).
+    // Byte-swap on PPC so the comparisons below produce sensible IsleObj/
+    // ListDecors/TexDef sizes instead of garbage.
+    sizeinfo.MaxSizeListDecors  = (S32)LBA2_LE32((U32)sizeinfo.MaxSizeListDecors);
+    sizeinfo.MaxSizeBodyDecors  = (S32)LBA2_LE32((U32)sizeinfo.MaxSizeBodyDecors);
+    sizeinfo.MaxSizeTexDef      = (S32)LBA2_LE32((U32)sizeinfo.MaxSizeTexDef);
+    sizeinfo.MaxTotalBodyDecors = (S32)LBA2_LE32((U32)sizeinfo.MaxTotalBodyDecors);
+#endif
 
     CubeInfosMem = (islemem / 5) / 10;
     ListDecorsMem = islemem / 10;
@@ -190,46 +222,65 @@ void InitMainBuffer(void) {
 
 //▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 void InitMemory(void) {
+#ifdef LBA2_TARGET_WIIU
+    // Cemu host-crashes (0xc0000005, interpreter AND recompiler) somewhere
+    // after the GroundTexture alloc; per-step traces pin the culprit.
+    #define IM_TRACE(name) LogPrintf("[InitMemory] %s", name)
+#else
+    #define IM_TRACE(name)
+#endif
     // Alloue Memoire DOS si possible
+    IM_TRACE("SkySeaTexture");
     SkySeaTexture = (U8 *)SmartMalloc(256 * 256L + RECOVER_AREA);
     if (!SkySeaTexture)
         TheEnd(NOT_ENOUGH_MEM, "SkySeaTexture");
 
+    IM_TRACE("ObjTexture");
     ObjTexture = (U8 *)SmartMalloc(256 * 256 + RECOVER_AREA);
     if (!ObjTexture)
         TheEnd(NOT_ENOUGH_MEM, "ObjTexture");
 
+    IM_TRACE("GroundTexture");
     GroundTexture = (U8 *)SmartMalloc(256 * 256 + RECOVER_AREA);
     if (!GroundTexture)
         TheEnd(NOT_ENOUGH_MEM, "GroundTexture");
 
+    IM_TRACE("PtrScene");
     PtrScene = (U8 *)SmartMalloc(PtrSceneMem);
     if (!PtrScene)
         TheEnd(NOT_ENOUGH_MEM, "PtrScene");
 
+    IM_TRACE("TabPartFlow");
     TabPartFlow = (T_FLOW *)SmartMalloc(TabPartFlowMem);
     if (!TabPartFlow)
         TheEnd(NOT_ENOUGH_MEM, "TabPartFlow");
 
+    IM_TRACE("BufferPof");
     BufferPof = (U8 *)SmartMalloc(BufferPofMem);
     if (!BufferPof)
         TheEnd(NOT_ENOUGH_MEM, "BufferPof");
 
+    IM_TRACE("BufferImpact");
     BufferImpact = (U8 *)SmartMalloc(BufferImpactMem);
     if (!BufferImpact)
         TheEnd(NOT_ENOUGH_MEM, "BufferImpact");
 
+    IM_TRACE("BufferFile3D");
     BufferFile3D = (U8 *)SmartMalloc(BufferFile3DMem);
     if (!BufferFile3D)
         TheEnd(NOT_ENOUGH_MEM, "BufferFile3D");
 
+    IM_TRACE("BufferValidePos");
     BufferValidePos = (U8 *)SmartMalloc(SIZE_BUFFER_VALIDE_POS);
     if (!BufferValidePos)
         TheEnd(NOT_ENOUGH_MEM, "BufferValidePos");
 
+    IM_TRACE("IsleMapIndex");
     IsleMapIndex = (U8 *)SmartMalloc(256);
     if (!IsleMapIndex)
         TheEnd(NOT_ENOUGH_MEM, "IsleMapIndex");
 
+    IM_TRACE("AdjustHQRMem");
     AdjustHQRMem();
+    IM_TRACE("done");
 }
