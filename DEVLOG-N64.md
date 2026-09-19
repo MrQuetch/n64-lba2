@@ -146,6 +146,31 @@ from the registers libdragon wrote (so NTSC and PAL presets are handled
 alike). The framebuffer and the 320×240 pixel cores are untouched;
 emulators show a small black border.
 
+The tester's first real crash came from the Temple of Bu (Desert island):
+dropping through the pit of the secret passage into the temple never loaded
+the scene — a black screen with the VI still refreshing. Reproduced in Ares
+by starting a new game directly in cube 10 (`DebugStartCube`), where the
+emulator logs "CPU frozen because of cached access to non-RDRAM area": the
+first render read a block offset of ~100 MB out of the block library.
+Integrity checks showed the library and the decoded grid were fine after
+`InitGrille`, and a software watchpoint hooked into the log calls narrowed
+the corruption to Twinsen's life script, opcode `LM_SET_GRM`: `IncrustGrm`
+was given a GRM index of `0x800Fxxxx` — DoLife's opcode jump-table pointer,
+still sitting in s1 — although the zone's `Info0` bytes were zero. The load
+`lw s1,24(s0)` hits an unaligned zone table and is emulated by the port's
+address-error handler, which writes the result into `reg_block_t::gpr[17]`…
+and libdragon's `inthandler.S`, on the way out of an exception, only reloads
+the caller-saved registers: s0–s7 are preserved by the C handler's ABI, so
+they are never restored from the frame, and the emulated value is dropped.
+Every emulated unaligned load whose destination is an s-register kept a
+stale value; it depends on register allocation, which is why it showed up as
+rare, scene-specific weirdness (the cellar scene-change heisenbug, where a
+zone's `Info3` read as 2048 with zero bytes, has the same signature). Fixed
+by patching `inthandler.S` in the toolchain image to reload s0–s7 from the
+frame after `__onCriticalException`; a self-test confirmed `lw` into s1 now
+returns the loaded value. `AffBrickBlock` additionally skips (and logs) a
+cell whose block index is outside the library instead of freezing.
+
 ## Diagnostics kept in the tree
 
 - `[renderprof]`/`[affprof]`: per-60-frame breakdown (terrain, object fill,

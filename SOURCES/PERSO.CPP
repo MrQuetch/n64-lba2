@@ -23,6 +23,9 @@ static inline U32 DosAvailableMem(void) { return 0; }
 #ifdef LBA2_TARGET_N64
 // LIB386/SYSTEM/N64_BACKEND.CPP: CRT overscan safe area, percent per side.
 extern "C" void N64SetScreenMargin(int pct);
+// "DebugStartCube: N" in LBA2.CFG: skip the menus and start a new game in
+// cube N (the console's `cube` command is stubbed on N64). -1 = off.
+static S32 N64DebugStartCube = -1;
 #endif
 
 #ifdef LBA2_TARGET_WIIU
@@ -2239,6 +2242,7 @@ void ReadConfigFile(void) {
     // "ScreenMargin: N" (percent per side, 0..15) shrinks the VI output window
     // so CRT overscan doesn't eat the dialogue text; missing key = 6.
     N64SetScreenMargin(DefFileBufferReadValueDefault("ScreenMargin", 6));
+    N64DebugStartCube = DefFileBufferReadValueDefault("DebugStartCube", -1);
 #endif
 
     Version_US = DefFileBufferReadValue("Version_US");
@@ -3162,6 +3166,18 @@ int main(int argc, char *argv[]) {
             TheEnd(PROGRAM_OK, "");
             return 0;
         }
+    }
+#endif
+
+#ifdef LBA2_TARGET_N64
+    if (N64DebugStartCube >= 0) {
+        LogPrintf("\nStarting at cube %d (DebugStartCube)\n", (int)N64DebugStartCube);
+        InitGame(1);
+        NewCube = N64DebugStartCube; // after InitGame, which resets NewCube to 0
+        FlagFade = TRUE;
+        MainLoop();
+        TheEnd(PROGRAM_OK, "");
+        return 0;
     }
 #endif
 

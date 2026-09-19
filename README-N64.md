@@ -58,8 +58,15 @@ retail data is ever committed.
 ## Building
 
 Requires Docker. The first run builds the `n64lba-toolchain` image from
-[`docker/Dockerfile.n64`](docker/Dockerfile.n64) (libdragon trunk compiled
-on top of the official toolchain image):
+[`docker/Dockerfile.n64`](docker/Dockerfile.n64): libdragon at a pinned
+commit, compiled on top of the official toolchain image **with one patch to
+`inthandler.S`** — on the way out of a CPU exception libdragon does not
+reload the callee-saved registers s0–s7 from the exception frame, which
+silently discards the result of this port's unaligned-access emulator
+whenever the faulting load targets one of them (see the devlog, "First
+contact with hardware"). If you already have the image from an earlier
+checkout, rebuild it: `docker build -t n64lba-toolchain:latest -f
+docker/Dockerfile.n64 docker`.
 
 ```
 ./build-n64.sh            # stage assets + build build-n64/lba2.elf + lba2.z64
@@ -80,6 +87,9 @@ needs the **Expansion Pak** (8 MB): the engine's static footprint alone is
   port's main diagnostic channel (asserts come with a symbolic backtrace).
 - **Hardware:** any flashcart that supports 64 MB ROMs and SRAM
   (EverDrive-64, SummerCart64, …) with an Expansion Pak fitted.
+- **Debug start:** `DebugStartCube: N` in `LBA2.CFG` skips the menus and
+  starts a new game in cube N (the debug console's `cube` command is not
+  available on N64). Scene numbers are in [docs/SCENES.md](docs/SCENES.md).
 - **CRT safe area:** the picture is scaled by the VI into a window 6 % smaller
   on each side, so consumer CRTs (which overscan by 4–8 %) show the whole
   dialogue text; emulators and upscalers see a thin black border instead.

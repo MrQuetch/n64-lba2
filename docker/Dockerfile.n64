@@ -1,12 +1,38 @@
-# N64-LBA2 toolchain image: libdragon (trunk) prebuilt on top of the official
+# N64-LBA2 toolchain image: libdragon prebuilt on top of the official
 # toolchain-only image. Build once:
 #   docker build -t n64lba-toolchain:latest -f docker/Dockerfile.n64 docker
 # (build-n64.sh does it automatically on first use)
 FROM ghcr.io/dragonminded/libdragon:latest
 
-RUN git clone --depth 1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon-src \
+# Pinned libdragon commit (trunk as of 2026-07): the port is validated against
+# this one; bump deliberately.
+ARG LIBDRAGON_COMMIT=2c3d5db653f4b46f8bc97f033fb29e126cafd60c
+
+# inthandler.S patch: on the way out of a CPU *exception* (not an interrupt),
+# libdragon restores only the caller-saved GPRs — the callee-saved s0-s7 are
+# preserved by the C handler's ABI, so it never reloads them from the frame.
+# That defeats a handler that emulates a faulting instruction and writes its
+# result into reg_block_t::gpr[16..23]: the write is silently dropped and the
+# register keeps its stale value. This port relies on exactly that (the
+# unaligned-access emulator in LIB386/SYSTEM/N64_BACKEND.CPP: the engine's
+# packed LE structures are read with lw/lh at odd addresses). Symptom found on
+# hardware: `lw s1,24(s0)` (a zone's Info0) left s1 = a jump-table pointer,
+# IncrustGrm loaded a wild GRM index and the grid got overwritten with an HQR
+# offset table -> CPU freeze in the Temple of Bu. Reload s0-s7 from the frame
+# after __onCriticalException returns; a no-op unless a handler changed them.
+RUN git clone https://github.com/DragonMinded/libdragon.git /tmp/libdragon-src \
  && cd /tmp/libdragon-src \
+ && git checkout --quiet "$LIBDRAGON_COMMIT" \
  && git rev-parse HEAD > /libdragon.commit \
+ && grep -q 'jal __onCriticalException' src/inthandler.S \
+ && awk 'BEGIN{done=0} {print} \
+        /jal __onCriticalException/ && !done {getline; print; \
+          print "\t# [N64-LBA2] reload callee-saved GPRs from the exception frame so a"; \
+          print "\t# handler that emulates a faulting load into s0-s7 takes effect."; \
+          for (r=16; r<=23; r++) printf "\tld $%d,(STACK_GPR+%d*8)(sp)\n", r, r; \
+          done=1}' src/inthandler.S > src/inthandler.S.new \
+ && mv src/inthandler.S.new src/inthandler.S \
+ && grep -q 'N64-LBA2' src/inthandler.S \
  && ./build.sh \
  && cd / \
  && rm -rf /tmp/libdragon-src

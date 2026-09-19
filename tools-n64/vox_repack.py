@@ -19,6 +19,9 @@ import struct, sys, os, glob
 
 def expand_lz(src, out_size, min_bloc=2):
     # Port of ExpandLZ (LIB386/SYSTEM/LZ.CPP): LZSS, flag byte gates 8 ops.
+    # min_bloc is the engine's MinBloc (HQR method 1 -> 2): back-reference
+    # length = (lo & 15) + min_bloc. (Was +min_bloc+1: harmless so far only
+    # because no retail VOX entry is LZ-compressed.)
     dst = bytearray(out_size)
     di = si = 0
     n = len(src)
@@ -32,7 +35,7 @@ def expand_lz(src, out_size, min_bloc=2):
             else:
                 lo = src[si]; hi = src[si + 1]; si += 2
                 off = (hi << 4) | (lo >> 4)
-                length = (lo & 0x0F) + min_bloc + 1
+                length = (lo & 0x0F) + min_bloc
                 start = di - off - 1
                 for k in range(length):
                     if di >= out_size:

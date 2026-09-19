@@ -1140,6 +1140,21 @@ void AffBrickBlock(S32 block, S32 brick, S16 x, S16 y, S16 z) {
     static int s_abb_logged = 0;
 #endif
 
+#ifdef LBA2_TARGET_N64
+    // A block index past the library would read block data as an offset and
+    // freeze the CPU on a wild address (no bus error recovery on N64). Seen
+    // once when a mis-emulated unaligned load fed IncrustGrm a wild GRM index
+    // (fixed in docker/Dockerfile.n64); kept as a guard: log and skip the cell.
+    if ((U32)block >= (U32)NbBlock) {
+        static int s_badLogged = 0;
+        if (s_badLogged < 8) {
+            LogPrintf("[grille] AffBrickBlock: block=%ld >= NbBlock=%ld at x=%d y=%d z=%d brick=%ld -> skipped\n",
+                      (long)block, (long)NbBlock, (int)x, (int)y, (int)z, (long)brick);
+            s_badLogged++;
+        }
+        return;
+    }
+#endif
     adr = GetAdrBlock(block);
     adr += HEADER_BLOCK;
 
