@@ -80,6 +80,12 @@ needs the **Expansion Pak** (8 MB): the engine's static footprint alone is
   port's main diagnostic channel (asserts come with a symbolic backtrace).
 - **Hardware:** any flashcart that supports 64 MB ROMs and SRAM
   (EverDrive-64, SummerCart64, …) with an Expansion Pak fitted.
+- **CRT safe area:** the picture is scaled by the VI into a window 6 % smaller
+  on each side, so consumer CRTs (which overscan by 4–8 %) show the whole
+  dialogue text; emulators and upscalers see a thin black border instead.
+  `ScreenMargin: N` in `LBA2.CFG` (0–15, percent per side) overrides it — the
+  built-in default is `N64_DEFAULT_SCREEN_MARGIN` in
+  `LIB386/SYSTEM/N64_BACKEND.CPP`.
 
 ## Known limitations / WIP
 

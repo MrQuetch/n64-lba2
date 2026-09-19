@@ -32,6 +32,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+// CRT overscan safe area, percent per side (see N64SetScreenMargin). 6% keeps
+// the dialogue text inside the visible raster on the tester's consumer CRT
+// (which ate ~4.5%) with headroom for worse sets; 0 = full raster.
+#define N64_DEFAULT_SCREEN_MARGIN 6
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -897,6 +902,76 @@ static void N64ShowLogOnExit(void) {
     }
 }
 
+// =============================================================================
+// CRT safe area
+//
+// The VI's default active window (libdragon's presets) fills the whole raster,
+// and a real CRT overscans it by roughly 4-8% per side: on the tester's TV the
+// first and last letters of every dialogue line were gone. Commercial N64
+// titles keep a margin for this. We leave the 320x240 framebuffer and the
+// engine's layout untouched and shrink the VI output window instead, scaling
+// the picture into it (VI resample), so the fix applies to every screen at
+// once and costs nothing at runtime. Emulators and upscalers show a thin black
+// border; the CRT shows the whole picture. Works off the registers display_init
+// wrote, so NTSC/PAL/MPAL presets are all handled the same way.
+#define VI_REG(off) (*(volatile uint32_t *)(0xA4400000u + (off)))
+#define VI_REG_H_VIDEO 0x24
+#define VI_REG_V_VIDEO 0x28
+#define VI_REG_X_SCALE 0x30
+#define VI_REG_Y_SCALE 0x34
+
+static uint32_t s_viBaseHVideo, s_viBaseVVideo, s_viBaseXScale, s_viBaseYScale;
+static int s_viBaseCaptured = 0;
+static int s_screenMarginPct = -1;
+
+extern "C" void N64SetScreenMargin(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 15) pct = 15;
+    if (!s_viBaseCaptured) {
+        s_viBaseHVideo = VI_REG(VI_REG_H_VIDEO);
+        s_viBaseVVideo = VI_REG(VI_REG_V_VIDEO);
+        s_viBaseXScale = VI_REG(VI_REG_X_SCALE);
+        s_viBaseYScale = VI_REG(VI_REG_Y_SCALE);
+        s_viBaseCaptured = 1;
+    }
+    if (pct == s_screenMarginPct) return;
+    s_screenMarginPct = pct;
+
+    // H_VIDEO/V_VIDEO: [25:16] start, [9:0] end (dot clocks / half-lines).
+    // X_SCALE/Y_SCALE: [11:0] 2.10 fixed "framebuffer units per output unit".
+    uint32_t hs = (s_viBaseHVideo >> 16) & 0x3FF, he = s_viBaseHVideo & 0x3FF;
+    uint32_t vs = (s_viBaseVVideo >> 16) & 0x3FF, ve = s_viBaseVVideo & 0x3FF;
+    uint32_t hw = he - hs, vh = ve - vs;
+    uint32_t nhw = hw * (100 - 2 * pct) / 100;
+    uint32_t nvh = vh * (100 - 2 * pct) / 100;
+    // Keep start/end parity (field/phase) by moving the edges by even amounts.
+    uint32_t dh = ((hw - nhw) / 2) & ~1u, dv = ((vh - nvh) / 2) & ~1u;
+    nhw = hw - 2 * dh;
+    nvh = vh - 2 * dv;
+    uint32_t xs = (s_viBaseXScale & 0xFFF) * hw / nhw;
+    uint32_t ys = (s_viBaseYScale & 0xFFF) * vh / nvh;
+
+    uint32_t hv = ((hs + dh) << 16) | (he - dh);
+    uint32_t vv = ((vs + dv) << 16) | (ve - dv);
+    uint32_t xr = (s_viBaseXScale & ~0xFFFu) | (xs & 0xFFF);
+    uint32_t yr = (s_viBaseYScale & ~0xFFFu) | (ys & 0xFFF);
+
+    disable_interrupts();
+    VI_REG(VI_REG_H_VIDEO) = hv;
+    VI_REG(VI_REG_V_VIDEO) = vv;
+    VI_REG(VI_REG_X_SCALE) = xr;
+    VI_REG(VI_REG_Y_SCALE) = yr;
+    enable_interrupts();
+    debugf("[LBA2] screen margin %d%%: H %lu..%lu V %lu..%lu xscale 0x%03lx yscale 0x%03lx\n",
+           pct, (unsigned long)(hs + dh), (unsigned long)(he - dh),
+           (unsigned long)(vs + dv), (unsigned long)(ve - dv),
+           (unsigned long)xs, (unsigned long)ys);
+}
+
+extern "C" int N64GetScreenMargin(void) {
+    return s_screenMarginPct < 0 ? 0 : s_screenMarginPct;
+}
+
 int main(int argc, char *argv[]) {
     debug_init_isviewer();
     debug_init_usblog();
@@ -912,6 +987,7 @@ int main(int argc, char *argv[]) {
     // downscale and do the CI8->RGBA16 palette lookup during the blit.
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, FILTERS_RESAMPLE);
     rdpq_init();
+    N64SetScreenMargin(N64_DEFAULT_SCREEN_MARGIN); // LBA2.CFG "ScreenMargin" re-applies later
 
     debugf("[LBA2] RDRAM: %lu MB%s\n",
            (unsigned long)(get_memory_size() / (1024UL * 1024UL)),

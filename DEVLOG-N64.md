@@ -131,6 +131,21 @@ loads now hit the cache (9 cubes in 1 ms); what remains is 2–3 frames of
 ~1 s for the first full render of the new cubes and their ~100 decor
 objects — the next target.
 
+## First contact with hardware
+
+A playtester ran the ROM on a real console (flashcart) into a consumer CRT.
+Two things the emulator could not tell us: exteriors run noticeably
+*smoother* on the silicon than under Ares (which models the VR4300's memory
+and exception costs conservatively, and this port takes an exception per
+unaligned access), so the profiler numbers are pessimistic; and the CRT's
+overscan ate the first and last letters of every dialogue line, since the VI
+presets fill the whole raster and the dialogue box sits 8 virtual pixels
+from the edge. The fix is in the VI, not the engine: after `display_init`
+the active window is shrunk by 6 % per side and the X/Y scales recomputed
+from the registers libdragon wrote (so NTSC and PAL presets are handled
+alike). The framebuffer and the 320×240 pixel cores are untouched;
+emulators show a small black border.
+
 ## Diagnostics kept in the tree
 
 - `[renderprof]`/`[affprof]`: per-60-frame breakdown (terrain, object fill,

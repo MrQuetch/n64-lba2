@@ -20,6 +20,11 @@
 static inline U32 DosAvailableMem(void) { return 0; }
 #endif
 
+#ifdef LBA2_TARGET_N64
+// LIB386/SYSTEM/N64_BACKEND.CPP: CRT overscan safe area, percent per side.
+extern "C" void N64SetScreenMargin(int pct);
+#endif
+
 #ifdef LBA2_TARGET_WIIU
 #include <SYSTEM/wiiu_sdl_compat.h>
 #include <SYSTEM/wiiu_endian.h>
@@ -2229,6 +2234,12 @@ void ReadConfigFile(void) {
     ReadInputConfig();    // Lit Config Clavier dans LBA2.CFG
     ReadGamepadConfig();  // Lit Config Gamepad dans LBA2.CFG
     ReadVolumeSettings(); // Lit Volumes dans LBA2.CFG
+
+#ifdef LBA2_TARGET_N64
+    // "ScreenMargin: N" (percent per side, 0..15) shrinks the VI output window
+    // so CRT overscan doesn't eat the dialogue text; missing key = 6.
+    N64SetScreenMargin(DefFileBufferReadValueDefault("ScreenMargin", 6));
+#endif
 
     Version_US = DefFileBufferReadValue("Version_US");
     NumVersion = (U8)DefFileBufferReadValue("CompressSave");
