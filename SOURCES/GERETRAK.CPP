@@ -12,7 +12,7 @@
 // endian-neutral — and stay as raw accesses.
 #ifdef LBA2_TARGET_WIIU
 #include <SYSTEM/wiiu_endian.h>
-#define TRK_RD16(p) ((S16)LBA2_LE16(*(U16 *)(p)))
+#define TRK_RD16(p) ((S16)LBA2_LE16_UA((const void *)(p)))
 #define TRK_WR16(p, v) (*(U16 *)(p) = LBA2_LE16((U16)(v)))
 #else
 #define TRK_RD16(p) (*(S16 *)(p))

@@ -2002,7 +2002,7 @@ void ChangeArdoise(S32 left) // 0:right, 1:left
 
     // Chargement pcx
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
-    if (!Load_HQR(tmpFilePath, Screen, ListArdoise[CurrentArdoise] * 2)) // *2 pour compter les palettes
+    if (!Load_HQR_Image(tmpFilePath, Screen, ListArdoise[CurrentArdoise] * 2)) // *2 pour compter les palettes
         TheEndCheckFile(tmpFilePath);
 
     CopyBlock(PLAN_X0, PLAN_Y0, PLAN_X1, PLAN_Y1, BufSpeak,
@@ -2029,7 +2029,7 @@ void DrawArdoise() {
     char tmpFilePath[ADELINE_MAX_PATH];
 
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
-    if (!Load_HQR(tmpFilePath, Log, PCR_ARDOISE))
+    if (!Load_HQR_Image(tmpFilePath, Log, PCR_ARDOISE))
         TheEndCheckFile(tmpFilePath);
 
     CopyScreen(Log, BufSpeak); //	Ardoise Vierge
@@ -2040,7 +2040,7 @@ void DrawArdoise() {
 */
     if (CurrentArdoise >= 0 AND CurrentArdoise < NbArdoise) {
         // Chargement pcx
-        if (!Load_HQR(tmpFilePath, Screen, ListArdoise[CurrentArdoise] * 2)) // *2 pour compter les palettes
+        if (!Load_HQR_Image(tmpFilePath, Screen, ListArdoise[CurrentArdoise] * 2)) // *2 pour compter les palettes
             TheEndCheckFile(tmpFilePath);
 
         CopyBlockIncrust(PLAN_X0, PLAN_Y0, PLAN_X1, PLAN_Y1, Screen,
@@ -2144,6 +2144,25 @@ void GereArdoise() {
 
 //──────────────────────────────────────────────────────────────────────────
 
+#if RS_SHIFT
+// [renderscale] the hand-unrolled 640-pitch versions below assume the
+// physical layout; save/restore the four 6x6 (virtual) corner blocks instead.
+void BackupAngles(S32 x0, S32 y0, S32 x1, S32 y1) {
+    U8 *dest = PtrBackupAngles; // 4 * 9 bytes (3x3 physical) <= 48
+    SaveBlock(Log, dest + 0, x0, y0, x0 + 5, y0 + 5);
+    SaveBlock(Log, dest + 12, x0, y1 - 5, x0 + 5, y1);
+    SaveBlock(Log, dest + 24, x1 - 5, y1 - 5, x1, y1);
+    SaveBlock(Log, dest + 36, x1 - 5, y0, x1, y0 + 5);
+}
+
+void RestoreAngles(S32 x0, S32 y0, S32 x1, S32 y1) {
+    U8 *src = PtrBackupAngles;
+    RestoreBlock(Log, src + 0, x0, y0, x0 + 5, y0 + 5);
+    RestoreBlock(Log, src + 12, x0, y1 - 5, x0 + 5, y1);
+    RestoreBlock(Log, src + 24, x1 - 5, y1 - 5, x1, y1);
+    RestoreBlock(Log, src + 36, x1 - 5, y0, x1, y0 + 5);
+}
+#else
 void BackupAngles(S32 x0, S32 y0, S32 x1, S32 y1) {
     U8 *dest = PtrBackupAngles;
     U8 *src;
@@ -2279,6 +2298,7 @@ void RestoreAngles(S32 x0, S32 y0, S32 x1, S32 y1) {
     dest[640 * 4 - 4] = src[7]; // 5eme ligne
     *(U32 *)(dest + 640 * 4 - 3) = *(U32 *)(src + 8);
 }
+#endif /* RS_SHIFT */
 
 //──────────────────────────────────────────────────────────────────────────
 // Trace les angles arrondis des cadres de menus et de messages

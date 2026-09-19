@@ -2,7 +2,14 @@
 
 #include <stdlib.h>
 
-#ifdef LBA2_TARGET_WIIU
+// The 32 MB bump-allocator workaround is WiiU-specific (its libc malloc +
+// MEMAllocFromDefaultHeapEx combo misbehaved). On N64 (8 MB RDRAM!) plain
+// newlib malloc is both correct and the only thing we can afford.
+#if defined(LBA2_TARGET_WIIU) && !defined(LBA2_TARGET_N64)
+#define N_MALLOC_WIIU_BUMP 1
+#endif
+
+#ifdef N_MALLOC_WIIU_BUMP
 #include <SYSTEM/LOGPRINT.H>
 #include <coreinit/memdefaultheap.h>
 #include <coreinit/memheap.h>
@@ -18,7 +25,7 @@ extern "C" {
 #define MALLOC_MASK (~(MALLOC_ALIGN - 1))
 
 // -----------------------------------------------------------------------------
-#ifdef LBA2_TARGET_WIIU
+#ifdef N_MALLOC_WIIU_BUMP
 // Private bump allocator on top of a 32 MB block we grab once at startup.
 // Bypasses both libc malloc and MEMAllocFromDefaultHeapEx which together
 // fail on small (~3 KB) requests after only 3 MB of engine allocations,
@@ -53,13 +60,13 @@ static void *WiiUBumpAlloc(U32 size, U32 align) {
 void *NormMalloc(U32 size) {
     U64 addr, temp;
 
-#ifdef LBA2_TARGET_WIIU
+#ifdef N_MALLOC_WIIU_BUMP
     temp = (U64)WiiUBumpAlloc(size + MALLOC_ALIGN, MALLOC_ALIGN);
 #else
     temp = (U64)malloc(size + MALLOC_ALIGN);
 #endif
 
-#ifdef LBA2_TARGET_WIIU
+#ifdef N_MALLOC_WIIU_BUMP
     static U64 s_totalAllocated = 0;
     static U32 s_allocCount = 0;
     if (temp) {
@@ -103,7 +110,7 @@ void *NormMalloc(U32 size) {
 
 void NormFree(void *addr) {
     addr = (void *)((U64)addr - *((S8 *)addr - 1));
-#ifdef LBA2_TARGET_WIIU
+#ifdef N_MALLOC_WIIU_BUMP
     // V1 bump allocator: NO-OP (we leak). Engine init doesn't free much,
     // and the 32 MB pool is more than enough for V1 boot scope.
     (void)addr;

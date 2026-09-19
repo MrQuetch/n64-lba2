@@ -44,7 +44,31 @@ static S32 sprite_center_16_16(U8 delta) {
 extern "C" {
 #endif
 
+static void ScaleSpriteTranspPhys(S32 num, S32 x, S32 y, S32 factorx, S32 factory, void *ptrbank, void *ptr_transp);
+
+// [renderscale] public entry: virtual coordinates / 16.16 factor relative to
+// the virtual resolution -> physical blit, then ScreenXMin.. back to virtual.
+static void RS_BoundsToVirtual(void) {
+#if RS_SHIFT
+    if (ScreenXMin != 32000) { // not the "nothing drawn" sentinel
+        ScreenXMin = RS_P2V(ScreenXMin);
+        ScreenYMin = RS_P2V(ScreenYMin);
+        ScreenXMax = RS_P2V(ScreenXMax);
+        ScreenYMax = RS_P2V(ScreenYMax);
+    }
+#endif
+}
+
 void ScaleSpriteTransp(S32 num, S32 x, S32 y, S32 factorx, S32 factory,
+                       void *ptrbank, void *ptr_transp) {
+    S32 clip[4];
+    RS_PushPhysClip(clip);
+    ScaleSpriteTranspPhys(num, RS_V2P(x), RS_V2P(y), factorx >> RS_SHIFT, factory >> RS_SHIFT, ptrbank, ptr_transp);
+    RS_PopClip(clip);
+    RS_BoundsToVirtual();
+}
+
+static void ScaleSpriteTranspPhys(S32 num, S32 x, S32 y, S32 factorx, S32 factory,
                        void *ptrbank, void *ptr_transp) {
     LIB386_TRACE_CPP("ScaleSpriteTransp", "1", "num=%d x=%d y=%d fx=%d fy=%d", num, x, y, factorx, factory);
     if (factorx <= 0) {
@@ -127,7 +151,7 @@ void ScaleSpriteTransp(S32 num, S32 x, S32 y, S32 factorx, S32 factory,
         U8 *srcPtr = srcBase + startY * sprite->deltaX + startX;
 
         S32 srcSkip = sprite->deltaX - width;
-        S32 dstSkip = ModeDesiredX - width;
+        S32 dstSkip = TabOffLine[1] - width;
 
         for (S32 scanY = 0; scanY < height; scanY++) {
             for (S32 scanX = 0; scanX < width; scanX++) {
@@ -259,7 +283,7 @@ void ScaleSpriteTransp(S32 num, S32 x, S32 y, S32 factorx, S32 factory,
             pendingRows = 0;
         }
 
-        dstPtr += ModeDesiredX;
+        dstPtr += TabOffLine[1];
     }
 }
 

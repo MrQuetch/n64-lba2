@@ -24,7 +24,9 @@ bool InitGraphics(U32 resX, U32 resY) {
         return false;
     }
 
-    if (!CreateVideoSurface(resX, resY)) {
+    // [renderscale] Phys is physical (resX >> RS_SHIFT); Log/Screen keep the
+    // virtual ModeDesiredX/Y for the game logic but a physical pitch.
+    if (!CreateVideoSurface(resX >> RS_SHIFT, resY >> RS_SHIFT)) {
         return false;
     }
 

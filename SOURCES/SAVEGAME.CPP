@@ -261,8 +261,21 @@ void SaveGame(S32 flagmess) {
     //	S32	x0, y0, x1, y1 ;
 
     // Image 160x120
+#if RS_SHIFT
+    // [renderscale] the physical Log is 320x240: a 2x box-sample gives the
+    // 160x120 linear thumbnail the save format expects.
+    {
+        U8 *dst = BufSpeak + 150000L;
+        for (S32 j = 0; j < 120; j++) {
+            const U8 *src = (const U8 *)Log + TabOffLine[(j * PhysResY) / 120];
+            for (S32 i = 0; i < 160; i++)
+                dst[j * 160 + i] = src[(i * PhysResX) / 160];
+        }
+    }
+#else
     ScaleBox(0, 0, 639, 479, Log, 0, 0, 159, 119, BufSpeak + 50000L); // old Screen
     SaveBlock(BufSpeak + 50000L, BufSpeak + 150000L, 0, 0, 159, 119);
+#endif
     RemapPicture(BufSpeak + 150000L, 160 * 120);
 
     if (flagmess) {

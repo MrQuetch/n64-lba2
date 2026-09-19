@@ -205,6 +205,14 @@ void DrawLineShade(S32 x0, S32 z0, S32 x1, S32 z1, S32 x2, S32 z2, S32 x3, S32 z
         yEnd = MAX_SCAN_LINES - 1;
 
     for (y = yStart; y <= yEnd; y++) {
+#if RS_SHIFT
+        // [renderscale] one virtual scanline per physical row, otherwise the
+        // shade CLUT would be applied twice to every row.
+        if (y & 1) {
+            TabNbPoint[y] = 0;
+            continue;
+        }
+#endif
         switch (TabNbPoint[y]) {
         case 2: //----------------------------------------------------
 

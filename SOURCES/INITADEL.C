@@ -44,6 +44,8 @@ int WriteEmbeddedDefaultLba2Cfg(const char *destPath);
 #define ibuffersize (640 * 480 + RECOVER_AREA)
 
 // -----------------------------------------------------------------------------
+// [renderscale] N64: the engine keeps its virtual 640x480 space; the physical
+// buffers are 320x240 (RS_SHIFT in SVGA/SCREEN.H) and LIB386 downscales.
 #ifndef RESOLUTION_X
 #define RESOLUTION_X 640
 #endif

@@ -83,7 +83,7 @@ void ClsTerrainZBuf() {
     Cls();
     SetClearColor(0);
 
-    memset(PtrZBuffer, 255, SIZE_Z_BUFFER); // Clear ZBuffer
+    memset(PtrZBuffer, 255, PhysResX * PhysResY * 2); // Clear ZBuffer ([renderscale] physical size)
 }
 
 /*──────────────────────────────────────────────────────────────────────────*/

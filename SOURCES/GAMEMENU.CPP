@@ -508,7 +508,7 @@ static void CycleVoiceLanguage(S32 step) {
 /*──────────────────────────────────────────────────────────────────────────*/
 
 void Init3DView(void) {
-    SetIsoProjection(320 - 8 - 1, 240);
+    SetIsoProjection(320 - 8 - 1, 240); // virtual 640x480 space (see SVGA/SCREEN.H)
     SetPosCamera(0, 0, 0);
     SetAngleCamera(0, 0, 0);
     SetLightVector(AlphaLight, BetaLight, 0);
@@ -1088,7 +1088,11 @@ static void WiiU_OskDraw(void) {
     }
 
     {
+#ifdef LBA2_TARGET_N64
+        static char hint[] = "A:ok  B:del  C-up:space  START:confirm  C-right:cancel";
+#else
         static char hint[] = "A:ok  B:canc  Y:spazio  +:conferma  -:annulla";
+#endif
         ColorFont(CoulTextMenu);
         Font(320 - SizeFont(hint) / 2, y0 + OSK_H + 14, hint);
     }
@@ -2369,7 +2373,7 @@ S32 DoGameMenu(U16 *ptrmenu) {
 
                 char tmpFilePathScreen[ADELINE_MAX_PATH];
                 GetResPath(tmpFilePathScreen, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
-                Load_HQR(tmpFilePathScreen, Log, PCR_MENU);
+                Load_HQR_Image(tmpFilePathScreen, Log, PCR_MENU);
                 CopyScreen(Log, Screen);
                 BoxStaticAdd(0, 0, ModeDesiredX - 1, ModeDesiredY - 1);
 
@@ -3080,7 +3084,22 @@ void DrawScreenSave(U8 *ptr, S32 x, S32 y) {
 
     BackupAngles(x - 1, y - 1, x1 + 1, y1 + 1);
     Box(x, y, x1, y1, 0);
+#if RS_SHIFT
+    // [renderscale] ptr is the 160x120 linear thumbnail of the save file;
+    // draw it downscaled into the physical rectangle.
+    {
+        const S32 px0 = RS_V2P(x), py0 = RS_V2P(y);
+        const S32 pw = RS_V2P(x1) - px0 + 1, ph = RS_V2P(y1) - py0 + 1;
+        for (S32 j = 0; j < ph; j++) {
+            U8 *dst = (U8 *)Log + TabOffLine[py0 + j] + px0;
+            const U8 *src = ptr + ((j * SCREEN_SAVE_HEIGHT) / ph) * SCREEN_SAVE_WIDTH;
+            for (S32 i = 0; i < pw; i++)
+                dst[i] = src[(i * SCREEN_SAVE_WIDTH) / pw];
+        }
+    }
+#else
     RestoreBlock(Log, ptr, x, y, x1, y1);
+#endif
     DrawCadre(x - 1, y - 1, x1 + 1, y1 + 1, ALL_ANGLES);
     RestoreAngles(x - 1, y - 1, x1 + 1, y1 + 1);
     BoxStaticAdd(x - 1, y - 1, x1 + 1, y1 + 1);
@@ -3263,7 +3282,7 @@ S32 MainGameMenu(S32 load) {
 
     WIIU_TRACE("MGM: Load_HQR(SCREEN,Screen,PCR_MENU) enter");
     GetResPath(tmpFilePathScreen, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
-    Load_HQR(tmpFilePathScreen, Screen, PCR_MENU);
+    Load_HQR_Image(tmpFilePathScreen, Screen, PCR_MENU);
     WIIU_TRACE("MGM: Load_HQR(PCR_MENU) exit");
     CopyScreen(Screen, Log);
     BoxStaticFullflip();
@@ -3316,7 +3335,7 @@ S32 MainGameMenu(S32 load) {
                 unlink(tmpFilePathSave);
                 FlagShowEndDemo = TRUE;
 
-                Load_HQR(tmpFilePathScreen, Log, PCR_MENU);
+                Load_HQR_Image(tmpFilePathScreen, Log, PCR_MENU);
                 CopyScreen(Log, Screen);
                 BoxStaticAdd(0, 0, ModeDesiredX - 1, ModeDesiredY - 1);
 
@@ -3328,7 +3347,7 @@ S32 MainGameMenu(S32 load) {
 #else
                 Credits(TRUE);
                 PlayAcf("BABY");
-                Load_HQR(tmpFilePathScreen, Screen, PCR_MENU);
+                Load_HQR_Image(tmpFilePathScreen, Screen, PCR_MENU);
                 CopyScreen(Screen, Log);
                 BoxStaticFullflip();
                 EscTimer = 0;
@@ -3965,7 +3984,7 @@ void Credits(S32 mode) {
 
     if (!mode) {
         GetResPath(tmpFilePath, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
-        Load_HQR(tmpFilePath, Screen, PCR_MENU);
+        Load_HQR_Image(tmpFilePath, Screen, PCR_MENU);
         CopyScreen(Screen, Log);
         BoxStaticFullflip();
     }
@@ -4028,7 +4047,7 @@ S32 SlideShow(void) {
         FadeToBlack(PtrPal);
 
         // charge image
-        Load_HQR(tmpScrshotFilePath, Log, (n * 2));
+        Load_HQR_Image(tmpScrshotFilePath, Log, (n * 2));
 
         // on peut pas afficher le logo LBA2 car il est dans la palette
         // du jeu
@@ -4152,7 +4171,7 @@ S32 AdelineLogo(void) {
     //      S32     volume ;
 
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
-    if (!Load_HQR(tmpFilePath, Log, PCR_LOGO))
+    if (!Load_HQR_Image(tmpFilePath, Log, PCR_LOGO))
         TheEndCheckFile(tmpFilePath);
 
     if (!Load_HQR(tmpFilePath, PalettePcx, PCR_LOGO + 1))
@@ -4235,7 +4254,7 @@ S32 ShowLogo(S32 numscr, S32 nsec) {
     char tmpFilePath[ADELINE_MAX_PATH];
 
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
-    if (Load_HQR(tmpFilePath, Log, numscr)
+    if (Load_HQR_Image(tmpFilePath, Log, numscr)
             AND Load_HQR(tmpFilePath, PalettePcx, numscr + 1)) {
         WaitNoInput();
 
@@ -4413,7 +4432,7 @@ void DemoBumper(void) {
 	}
 */
     ShowLogo(PCR_BUMPER, 5);
-    Load_HQR(tmpFilePath, Log, PCR_MENU);
+    Load_HQR_Image(tmpFilePath, Log, PCR_MENU);
 }
 #endif // DEMO
 
@@ -4442,7 +4461,7 @@ void EffectPcx(U8 numpcx, U8 *screen, U8 effect, U8 flagbcl) {
 
     switch (effect) {
     case PCX_FADE:
-        if (!Load_HQR(tmpFilePath, Log, numpcx))
+        if (!Load_HQR_Image(tmpFilePath, Log, numpcx))
             TheEndCheckFile(tmpFilePath);
 
         BoxStaticFullflip();
@@ -4453,7 +4472,7 @@ void EffectPcx(U8 numpcx, U8 *screen, U8 effect, U8 flagbcl) {
         S32 x, y;
         U8 *ptr = screen;
 
-        if (!Load_HQR(tmpFilePath, screen, numpcx))
+        if (!Load_HQR_Image(tmpFilePath, screen, numpcx))
             TheEndCheckFile(tmpFilePath);
 
         PaletteSync(PalettePcx);

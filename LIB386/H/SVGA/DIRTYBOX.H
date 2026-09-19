@@ -37,6 +37,7 @@ void BoxMovingAdd(S32 x0, S32 y0, S32 x1, S32 y1);
 void BoxStaticAdd(S32 x0, S32 y0, S32 x1, S32 y1);
 void BoxUnstaticAdd(S32 x0, S32 y0, S32 x1, S32 y1);
 void BoxCls(S32 x0, S32 y0, S32 x1, S32 y1);
+void BoxClsAll(); ///< [renderscale] clear the whole box clip area (Cls())
 void BoxStaticFullflip();
 void BoxBlitStaticListToScreen();
 void BoxBlit();
@@ -52,7 +53,7 @@ extern void DefaultBoxOneClear(T_BOX *pbox);
 // -----------------------------------------------------------------------------
 #define Flip BoxStaticFullflip
 
-#define Cls() BoxCls(BoxClipXMin, BoxClipYMin, BoxClipXMax - 1, BoxClipYMax - 1)
+#define Cls() BoxClsAll()
 
 #define SetBoxScreenGet(boxscreenget) \
     BoxScreenGet = ((boxscreenget) ? (boxscreenget) : LockPrimary)

@@ -6,8 +6,8 @@
 // endian-sensitive.
 #ifdef LBA2_TARGET_WIIU
 #include <SYSTEM/wiiu_endian.h>
-#define POF_RD16(p) ((S16)LBA2_LE16(*(U16 *)(p)))
-#define POF_RD32(p) ((S32)LBA2_LE32(*(U32 *)(p)))
+#define POF_RD16(p) ((S16)LBA2_LE16_UA((const void *)(p)))
+#define POF_RD32(p) ((S32)LBA2_LE32_UA((const void *)(p)))
 #else
 #define POF_RD16(p) (*(S16 *)(p))
 #define POF_RD32(p) (*(S32 *)(p))

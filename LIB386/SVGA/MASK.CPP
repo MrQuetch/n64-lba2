@@ -3,6 +3,7 @@
 #include <SVGA/SCREEN.H>
 #include <SVGA/SCREENXY.H>
 #include <stdio.h>
+#include <string.h>
 #include <SYSTEM/DEBUG_TRACES.H>
 
 U8 ColMask = 0;
@@ -124,6 +125,73 @@ S32 ClippingMask(S32 x0, S32 y0, S32 x1, S32 y1, U8 *graphics) {
     return 0; // TODO: Remove, make void
 }
 
+#if RS_SHIFT
+// [renderscale] Half-scale mask blit (fonts): virtual coordinates and
+// full-resolution glyphs onto the physical screen. Each physical pixel is
+// the OR of its 2x2 virtual block, so 1-pixel strokes survive the downscale.
+S32 AffMask(S32 nummask, S32 x, S32 y, void *bankmask) {
+    U8 *data = (U8 *)bankmask + ((U32 *)bankmask)[nummask];
+    U8 deltaX = data[0];
+    U8 nbLine = data[1];
+    S32 hotX = data[2];
+    S32 hotY = data[3];
+    U8 *graphics = data + 4;
+
+    x += hotX;
+    y += hotY;
+    S32 x1 = x + deltaX - 1;
+    S32 y1 = y + nbLine - 1;
+
+    ScreenXMin = x;
+    ScreenXMax = x1;
+    ScreenYMin = y;
+    ScreenYMax = y1;
+
+    if (x > ClipXMax || y > ClipYMax || x1 < ClipXMin || y1 < ClipYMin)
+        return 0;
+
+    const S32 pcx0 = RS_V2P(ClipXMin), pcy0 = RS_V2P(ClipYMin);
+    const S32 pcx1 = RS_V2P(ClipXMax), pcy1 = RS_V2P(ClipYMax);
+    const S32 px0 = RS_V2P(x);
+    const S32 accLen = RS_V2P(x1) - px0 + 1; // <= 129
+    static U8 acc[256];
+    const U8 color = ColMask;
+
+    memset(acc, 0, accLen);
+    for (S32 i = 0; i < nbLine; i++) {
+        S32 vy = y + i;
+        // decode one line: alternating [jump][write] runs
+        U8 nbBlock = *graphics++;
+        S32 vx = x;
+        while (nbBlock > 0) {
+            vx += *graphics++; // zeros to jump
+            nbBlock--;
+            if (nbBlock == 0)
+                break;
+            U8 toWrite = *graphics++;
+            nbBlock--;
+            for (U8 k = 0; k < toWrite; k++, vx++)
+                acc[RS_V2P(vx) - px0] = 1;
+        }
+        // flush on the second row of each physical line (or the last one)
+        if ((vy & 1) || i == nbLine - 1) {
+            S32 py = RS_V2P(vy);
+            if (py >= pcy0 && py <= pcy1) {
+                U8 *row = (U8 *)Log + TabOffLine[py];
+                for (S32 k = 0; k < accLen; k++) {
+                    if (!acc[k])
+                        continue;
+                    S32 px = px0 + k;
+                    if (px >= pcx0 && px <= pcx1)
+                        row[px] = color;
+                }
+            }
+            memset(acc, 0, accLen);
+        }
+    }
+    return 0;
+}
+#else
 S32 AffMask(S32 nummask, S32 x, S32 y, void *bankmask) {
     U8 *data = (U8 *)bankmask + ((U32 *)bankmask)[nummask];
     U8 deltaX = data[0];
@@ -185,3 +253,4 @@ S32 AffMask(S32 nummask, S32 x, S32 y, void *bankmask) {
 
     return 0; // TODO: make it void?
 }
+#endif /* RS_SHIFT */

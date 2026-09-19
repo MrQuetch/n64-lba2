@@ -2763,7 +2763,7 @@ int main(int argc, char *argv[]) {
             // pour Windows car ca prend du temps a scaner le CD
             WIIU_TRACE("CDROM Load_HQR(SCREEN,Log,PCR_CDROM) enter");
             GetResPath(tmpFilePath, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
-            Load_HQR(tmpFilePath, Log, PCR_CDROM);
+            Load_HQR_Image(tmpFilePath, Log, PCR_CDROM);
             WIIU_TRACE("CDROM Load_HQR(SCREEN) exit");
             WIIU_TRACE("BoxStaticFullflip enter");
             BoxStaticFullflip();

@@ -19,3 +19,10 @@ tests/SNAPSHOT/fixtures/*.raw
 # data by build-wiiu.sh; never commit game assets)
 /build-wiiu/
 /wuhb-content/
+
+# N64 build output (lba2.z64 + DFS staged from local retail data by
+# build-n64.sh; never commit game assets), emulator save RAM
+/build-n64/
+/lba2.z64
+/lba2.dfs
+/lba2.ram

@@ -118,9 +118,9 @@ void ScaleRotAnim3D(U8 *ptanim, S32 scale, S32 flagrot) {
     S32 x, y, z;
 
     pt = (S16 *)ptanim;
-    nbframe = LBA2_LE16(*(U16 *)pt);
+    nbframe = LBA2_LE16_UA((const void *)pt);
     pt++;
-    nbgroup = LBA2_LE16(*(U16 *)pt);
+    nbgroup = LBA2_LE16_UA((const void *)pt);
     pt += 3;
 
     for (frm = 0; frm < nbframe; frm++) {
@@ -167,9 +167,9 @@ U32 GetSizeAnim3D(U8 *ptanim) {
 
     // LE fields (see ScaleRotAnim3D): raw BE reads here made SizeCurrentAnim
     // huge, blowing the HoloMalloc arena before the globe even loaded.
-    nbframe = LBA2_LE16(*(U16 *)pt);
+    nbframe = LBA2_LE16_UA((const void *)pt);
     pt++;
-    nbgroup = LBA2_LE16(*(U16 *)pt);
+    nbgroup = LBA2_LE16_UA((const void *)pt);
 
     pt += (3 + (nbframe * (nbgroup + 1) * 4));
 

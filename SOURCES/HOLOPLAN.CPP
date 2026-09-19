@@ -424,7 +424,7 @@ void InitHoloPlan() {
 
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, HOLO_HQR_NAME);
 
-    Load_HQR(tmpFilePath, Log, id);
+    Load_HQR_Image(tmpFilePath, Log, id);
 
     Load_HQR(tmpFilePath, buffer, id + 1);
 

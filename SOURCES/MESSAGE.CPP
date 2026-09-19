@@ -594,7 +594,7 @@ S32 CopyFileCD_HD(char *filecd, char *filehd) {
     FadeToBlack(PtrPal);
 
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, SCREEN_HQR_NAME);
-    Load_HQR(tmpFilePath, Log, PCR_CDROM);
+    Load_HQR_Image(tmpFilePath, Log, PCR_CDROM);
     BoxUpdate();
 
     FadeToPal(PtrPalNormal);

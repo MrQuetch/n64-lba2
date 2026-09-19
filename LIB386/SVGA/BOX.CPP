@@ -23,10 +23,15 @@ void Box(S32 x0, S32 y0, S32 x1, S32 y1, S32 col) {
         y1 = ClipYMax;
     }
 
+    // [renderscale] clip in virtual space above, fill in physical space
+    x0 = RS_V2P(x0);
+    x1 = RS_V2P(x1);
+    y0 = RS_V2P(y0);
+    y1 = RS_V2P(y1);
+
     U32 screenWidth = TabOffLine[1];
     U32 deltaY = y1 - y0;
     U32 deltaX = x1 - x0;
-    U32 deltaScreen = screenWidth - deltaX;
     U32 offset = TabOffLine[y0] + x0;
 
     for (int j = 0; j <= deltaY; j++) {

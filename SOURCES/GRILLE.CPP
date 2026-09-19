@@ -35,6 +35,24 @@ S32 YpOrgw;
 #define NB_COLON 256  // 28
 #define MAX_BRICK 256 // 150
 
+#ifdef LBA2_TARGET_N64
+// [renderscale] the brick pipeline is the one part of the engine that works
+// directly in PHYSICAL (320x240) space: Map2Screen is halved and the bank is
+// pre-downscaled 2x at load (HalveBrickBank), so masks/CopyMask/CalcGraphMsk
+// come for free and every screen-space brick constant halves with it. The
+// clip rectangle / ScreenXMin.. it exchanges with the rest of the engine are
+// virtual (see SVGA/SCREEN.H) and converted at the boundary.
+#define BRICK_COL_W 12  /* column stride, was 24 */
+#define BRICK_CLIP_X 320
+#define BRICK_CLIP_Y 240
+#define BRICK_DY 19 /* brick graphic height for overlap tests, was 38 */
+#else
+#define BRICK_COL_W 24
+#define BRICK_CLIP_X 640
+#define BRICK_CLIP_Y 480
+#define BRICK_DY 38
+#endif
+
 S16 NbBrickColon[NB_COLON];
 
 typedef struct
@@ -102,6 +120,193 @@ T_GRI_HEADER *GriHeader;
 #define MAX_BRICK_GAME 20000L
 #define OFFSET_BUFFER_FLAG 153800L
 
+#ifdef LBA2_TARGET_N64
+/* [renderscale] Pre-downscale the whole brick bank 2x right after
+ * LoadUsedBrick builds it, so AffGraph/CopyMask/CalcGraphMsk keep working
+ * untouched on half-size graphics (masks are derived AFTER this in
+ * InitGrille). Rewrite is in-place, front-to-back: each new brick is never
+ * larger than its source, so the write cursor never catches unread data;
+ * a copy-through fallback keeps the bank valid if a brick can't be scaled. */
+
+#define HB_MAX_W 96
+#define HB_MAX_H 96
+#define HB_MAX_BRICKS 4096
+
+static U8 s_hbRaw[HB_MAX_W * HB_MAX_H]; /* decoded full-res brick, 0 = transparent */
+static U8 s_hbEnc[8192];                /* encoded half-res brick staging */
+static U32 s_hbOldTab[HB_MAX_BRICKS + 1];
+
+/* Encode one half-res line (w2 pixels, already sampled) as skip/copy/repeat
+ * blocks. Blocks MUST cover exactly w2 pixels (AffGraph advances the screen
+ * pointer by pitch-deltaX at line end) and NbBlock must be >= 1 (CalcGraphMsk
+ * decodes with do/while). Returns bytes written. */
+static U32 HalveBrickEncodeLine(const U8 *pix, S32 w2, U8 *dst) {
+    U8 *out = dst + 1; /* dst[0] = NbBlock */
+    S32 nbblock = 0;
+    S32 x = 0;
+
+    while (x < w2) {
+        S32 run = 1;
+        U8 c = pix[x];
+        while (x + run < w2 AND pix[x + run] == c)
+            run++;
+
+        if (c == 0) {
+            S32 left = run;
+            while (left > 0) {
+                S32 n = (left > 64) ? 64 : left;
+                *out++ = (U8)(n - 1); /* opcode 00 = skip n */
+                nbblock++;
+                left -= n;
+            }
+        } else if (run >= 3) {
+            S32 left = run;
+            while (left > 0) {
+                S32 n = (left > 64) ? 64 : left;
+                *out++ = (U8)(0x80 | (n - 1)); /* opcode 10 = repeat n */
+                *out++ = c;
+                nbblock++;
+                left -= n;
+            }
+        } else {
+            /* short opaque runs: accumulate a copy block */
+            S32 start = x;
+            S32 len = run;
+            while (x + len < w2 AND pix[x + len] != 0) {
+                S32 r2 = 1;
+                while (x + len + r2 < w2 AND pix[x + len + r2] == pix[x + len])
+                    r2++;
+                if (r2 >= 3)
+                    break;
+                len += r2;
+            }
+            S32 done = 0;
+            while (done < len) {
+                S32 n = (len - done > 64) ? 64 : (len - done);
+                *out++ = (U8)(0x40 | (n - 1)); /* opcode 01 = copy n */
+                memcpy(out, pix + start + done, n);
+                out += n;
+                nbblock++;
+                done += n;
+            }
+            x = start + len;
+            continue;
+        }
+        x += run;
+    }
+
+    dst[0] = (U8)nbblock;
+    return (U32)(out - dst);
+}
+
+/* Returns the new total bank size (first table entry stays (nbg+1)*4). */
+static U32 HalveBrickBank(void) {
+    U32 *tab = (U32 *)BufferBrick;
+    U32 nbg = (tab[0] - 4) >> 2; /* same convention as CreateMaskGph */
+    U32 i, skipped = 0;
+
+    if (nbg == 0 OR nbg > HB_MAX_BRICKS) {
+        LogPrintf("[HalveBrickBank] SKIP: nbg=%u out of range\n", (unsigned)nbg);
+        return tab[nbg];
+    }
+
+    for (i = 0; i <= nbg; i++)
+        s_hbOldTab[i] = tab[i];
+
+    U32 newoff = tab[0];
+
+    for (i = 0; i < nbg; i++) {
+        const U8 *src = BufferBrick + s_hbOldTab[i];
+        U32 oldsize = s_hbOldTab[i + 1] - s_hbOldTab[i];
+        S32 w = src[0];
+        S32 h = src[1];
+        U32 encsize = 0;
+
+        if (w > 0 AND h > 0 AND w <= HB_MAX_W AND h <= HB_MAX_H) {
+            /* ---- decode full-res brick to raw pixels (0 = transparent) */
+            memset(s_hbRaw, 0, (size_t)(w * h));
+            const U8 *s = src + 4;
+            for (S32 y = 0; y < h; y++) {
+                U8 *row = s_hbRaw + y * w;
+                S32 xx = 0;
+                U8 nb = *s++;
+                while (nb--) {
+                    U8 ctl = *s++;
+                    S32 n = (ctl & 0x3F) + 1;
+                    switch (ctl >> 6) {
+                    case 0: /* skip */
+                        xx += n;
+                        break;
+                    case 1: /* copy */
+                        while (n--) {
+                            if (xx < w)
+                                row[xx] = *s;
+                            xx++;
+                            s++;
+                        }
+                        break;
+                    default: /* repeat */
+                    {
+                        U8 c = *s++;
+                        while (n--) {
+                            if (xx < w)
+                                row[xx] = c;
+                            xx++;
+                        }
+                    } break;
+                    }
+                }
+            }
+
+            /* ---- sample even pixels/lines and re-encode into staging */
+            S32 w2 = (w + 1) >> 1;
+            S32 h2 = (h + 1) >> 1;
+            U8 line[HB_MAX_W / 2 + 1];
+            U8 *enc = s_hbEnc;
+
+            enc[0] = (U8)w2;
+            enc[1] = (U8)h2;
+            enc[2] = (U8)(((S32)(S8)src[2]) >> 1); /* HotX */
+            enc[3] = (U8)(((S32)(S8)src[3]) >> 1); /* HotY */
+            enc += 4;
+
+            for (S32 y2 = 0; y2 < h2; y2++) {
+                const U8 *row = s_hbRaw + (2 * y2) * w;
+                for (S32 x2 = 0; x2 < w2; x2++)
+                    line[x2] = row[2 * x2];
+                enc += HalveBrickEncodeLine(line, w2, enc);
+                if ((U32)(enc - s_hbEnc) > sizeof(s_hbEnc) - 256) {
+                    enc = s_hbEnc; /* staging overflow -> copy-through */
+                    break;
+                }
+            }
+            if (enc != s_hbEnc)
+                encsize = (U32)(enc - s_hbEnc);
+        }
+
+        if (encsize == 0 OR newoff + encsize > s_hbOldTab[i + 1]) {
+            /* can't scale safely: keep the original graphic (compacted) */
+            memmove(BufferBrick + newoff, src, oldsize);
+            tab[i] = newoff;
+            newoff += oldsize;
+            skipped++;
+        } else {
+            memcpy(BufferBrick + newoff, s_hbEnc, encsize);
+            tab[i] = newoff;
+            newoff += encsize;
+        }
+    }
+
+    tab[nbg] = newoff;
+
+    LogPrintf("[HalveBrickBank] %u bricks halved (%u copied through), size %u -> %u\n",
+              (unsigned)(nbg - skipped), (unsigned)skipped,
+              (unsigned)s_hbOldTab[nbg], (unsigned)newoff);
+
+    return newoff;
+}
+#endif /* LBA2_TARGET_N64 */
+
 /*--------------------------------------------------------------------------*/
 S32 LoadUsedBrick() {
     U32 i, j, b;
@@ -145,7 +350,7 @@ S32 LoadUsedBrick() {
 
         // TabBlock starts with a U32 offset table (LE on disk). Without the
         // swap, ptb points into nowhere and the brick scan reads garbage.
-        ptb = TabBlock + LBA2_LE32(*(U32 *)(TabBlock + ((i - 1) << 2)));
+        ptb = TabBlock + LBA2_LE32_UA((const void *)(TabBlock + ((i - 1) << 2)));
         ptw = (U16 *)(ptb + 5);                  /* Jump dx dy dz et collis */
         maxbrk = *ptb * *(ptb + 1) * *(ptb + 2); /* dx*dy*dz*/
 
@@ -265,7 +470,7 @@ S32 LoadUsedBrick() {
         if (!b)
             continue;
 
-        ptb = TabBlock + LBA2_LE32(*(U32 *)(TabBlock + ((i - 1) << 2)));
+        ptb = TabBlock + LBA2_LE32_UA((const void *)(TabBlock + ((i - 1) << 2)));
         ptw = (U16 *)(ptb + 5);                  /* Jump dx dy dz et collis */
         maxbrk = *ptb * *(ptb + 1) * *(ptb + 2); /* dx*dy*dz*/
 
@@ -284,6 +489,12 @@ S32 LoadUsedBrick() {
     Close(handle);
 
     ForbidenBrick = tabflag[BkgHeader.ForbidenBrick];
+
+#ifdef LBA2_TARGET_N64
+    // [renderscale] shrink the freshly built bank to half resolution
+    // before InitGrille derives the masks from it.
+    offset = (U32)HalveBrickBank();
+#endif
 
     return (offset);
 }
@@ -390,11 +601,11 @@ void InitGrille(U32 numcube) {
     // Without LE32 swap, NbBlock balloons to ~67M and CopyMapToCube blasts
     // gigabytes of garbage into ListObjet, clobbering ptrobj->PtrFile3D for
     // every scene object beyond Twinsen.
-    NbBlock = LBA2_LE32(*(U32 *)TabBlock) / 4;
+    NbBlock = LBA2_LE32_UA((const void *)TabBlock) / 4;
     WIIU_TRACE_FMT("[trace] InitGrille: NbBlock=%u (raw first U32 of TabBlock = 0x%08X swapped=0x%08X)\n",
                    (unsigned)NbBlock,
                    (unsigned)(*(U32 *)TabBlock),
-                   (unsigned)LBA2_LE32(*(U32 *)TabBlock));
+                   (unsigned)LBA2_LE32_UA((const void *)TabBlock));
 
     WIIU_TRACE("InitGrille: CopyMapToCube enter");
     CopyMapToCube();
@@ -452,7 +663,7 @@ U8 *GetAdrColonneMap(S32 x, S32 z) {
 
     // BufMap U16 offset table is LE on disk; without swap CopyMapToCube
     // dereferences garbage column pointers.
-    offset = LBA2_LE16(*(U16 *)(BufMap + sizeof(T_GRI_HEADER) + (x + (z * SIZE_CUBE_Z)) * 2));
+    offset = LBA2_LE16_UA((const void *)(BufMap + sizeof(T_GRI_HEADER) + (x + (z * SIZE_CUBE_Z)) * 2));
 
     return (BufMap + sizeof(T_GRI_HEADER) + offset);
 }
@@ -782,18 +993,19 @@ void DrawOverBrick(S32 xm, S32 ym, S32 zm) {
     S32 xw, yw, zw;
     S32 recouvre;
 
-    startcol = (ClipXMin + 24) / 24 - 1;
-    endcol = (ClipXMax + 24) / 24;
+    // [renderscale] the clip rectangle is virtual, the brick columns physical
+    startcol = (RS_V2P(ClipXMin) + BRICK_COL_W) / BRICK_COL_W - 1;
+    endcol = (RS_V2P(ClipXMax) + BRICK_COL_W) / BRICK_COL_W;
 
     for (col = startcol; col <= endcol; col++) {
         ptrlbc = &ListBrickColon[col][0];
 
-        colscreen = col * 24 - 24;
+        colscreen = col * BRICK_COL_W - BRICK_COL_W;
 
         for (i = 0; i < NbBrickColon[col]; i++) {
             /* bricks devant */
-            if (ptrlbc->Ys + 38 > ClipYMin
-                                      AND ptrlbc->Ys <= ClipYMax) {
+            if (ptrlbc->Ys + BRICK_DY > RS_V2P(ClipYMin)
+                                      AND ptrlbc->Ys <= RS_V2P(ClipYMax)) {
                 recouvre = FALSE;
 
                 // essai correction bugs escaliers
@@ -841,18 +1053,19 @@ void DrawOverBrick3(S32 xm, S32 ym, S32 zm, S32 ymax) {
     S32 col, i;
     S32 startcol, endcol;
 
-    startcol = (ClipXMin + 24) / 24 - 1;
-    endcol = (ClipXMax + 24) / 24;
+    // [renderscale] the clip rectangle is virtual, the brick columns physical
+    startcol = (RS_V2P(ClipXMin) + BRICK_COL_W) / BRICK_COL_W - 1;
+    endcol = (RS_V2P(ClipXMax) + BRICK_COL_W) / BRICK_COL_W;
 
     for (col = startcol; col <= endcol; col++) {
         ptrlbc = &ListBrickColon[col][0];
 
-        colscreen = col * 24 - 24;
+        colscreen = col * BRICK_COL_W - BRICK_COL_W;
 
         for (i = 0; i < NbBrickColon[col]; i++, ptrlbc++) {
             /* bricks devant */
-            if (ptrlbc->Ys + 38 > ClipYMin
-                                      AND ptrlbc->Ys <= ClipYMax) {
+            if (ptrlbc->Ys + BRICK_DY > RS_V2P(ClipYMin)
+                                      AND ptrlbc->Ys <= RS_V2P(ClipYMax)) {
                 if (ptrlbc->Ym > ymax) {
                     if ((ptrlbc->Zm >= zm)
                             OR(ptrlbc->Xm >= xm)) {
@@ -885,18 +1098,19 @@ void DrawOverBrickCage(S32 xm, S32 ym, S32 zm) {
     S32 col, i;
     S32 startcol, endcol;
 
-    startcol = (ClipXMin + 24) / 24 - 1;
-    endcol = (ClipXMax + 24) / 24;
+    // [renderscale] the clip rectangle is virtual, the brick columns physical
+    startcol = (RS_V2P(ClipXMin) + BRICK_COL_W) / BRICK_COL_W - 1;
+    endcol = (RS_V2P(ClipXMax) + BRICK_COL_W) / BRICK_COL_W;
 
     for (col = startcol; col <= endcol; col++) {
         ptrlbc = &ListBrickColon[col][0];
 
-        colscreen = col * 24 - 24;
+        colscreen = col * BRICK_COL_W - BRICK_COL_W;
 
         for (i = 0; i < NbBrickColon[col]; i++, ptrlbc++) {
             /* bricks devant */
-            if (ptrlbc->Ys + 38 > ClipYMin
-                                      AND ptrlbc->Ys <= ClipYMax) {
+            if (ptrlbc->Ys + BRICK_DY > RS_V2P(ClipYMin)
+                                      AND ptrlbc->Ys <= RS_V2P(ClipYMax)) {
                 if (ptrlbc->Ym > 0 // diff ici avec DrawOverBrick3
                                  AND ptrlbc->Ym >= ym) {
                     if ((ptrlbc->Zm == zm)
@@ -935,7 +1149,7 @@ void AffBrickBlock(S32 block, S32 brick, S16 x, S16 y, S16 z) {
 
     // numbrick is LE on disk inside TabBlock; without swap AffGraph gets a
     // garbage index and overruns BufferBrick header → RefreshGrille hang.
-    numbrick = LBA2_LE16(*(U16 *)adr); /* & 32767 */
+    numbrick = LBA2_LE16_UA((const void *)adr); /* & 32767 */
 
 #ifdef LBA2_TARGET_WIIU
     if (s_abb_logged < 5) {
@@ -963,7 +1177,7 @@ void AffBrickBlock(S32 block, S32 brick, S16 x, S16 y, S16 z) {
         }
 #endif
 
-        if (XScreen >= -24 AND XScreen < 640 AND YScreen >= -38 AND YScreen < 480) {
+        if (XScreen >= -BRICK_COL_W AND XScreen < BRICK_CLIP_X AND YScreen >= -BRICK_DY AND YScreen < BRICK_CLIP_Y) {
 #ifdef LBA2_TARGET_WIIU
             static int s_affgraph_logged = 0;
             if (s_affgraph_logged < 3) {
@@ -975,9 +1189,9 @@ void AffBrickBlock(S32 block, S32 brick, S16 x, S16 y, S16 z) {
                 s_affgraph_logged++;
             }
 #endif
-            AffGraph(numbrick - 1, XScreen, YScreen, BufferBrick);
+            AffGraphNative(numbrick - 1, XScreen, YScreen, BufferBrick); // [renderscale] physical bank+coords
 
-            col = (XScreen + 24) / 24; /* 48 / 2 colonne intercalée */
+            col = (XScreen + BRICK_COL_W) / BRICK_COL_W; /* 48 / 2 colonne intercalée */
 
             nb = NbBrickColon[col];
 
@@ -1098,13 +1312,13 @@ void AffBrickBlockColon(S32 block, S32 brick, S16 x, S16 y, S16 z) {
     brickcol = *adr;
     adr += 2;
 
-    numbrick = LBA2_LE16(*(U16 *)adr); /* & 32767 */
+    numbrick = LBA2_LE16_UA((const void *)adr); /* & 32767 */
 
     if (numbrick AND numbrick != ForbidenBrick) {
         Map2Screen(x - StartXCube, y - StartYCube, z - StartZCube);
 
-        if (XScreen >= -24 AND XScreen < 640 AND YScreen >= -38 AND YScreen < 480) {
-            col = (XScreen + 24) / 24; /* 48 / 2 colonne intercalée */
+        if (XScreen >= -BRICK_COL_W AND XScreen < BRICK_CLIP_X AND YScreen >= -BRICK_DY AND YScreen < BRICK_CLIP_Y) {
+            col = (XScreen + BRICK_COL_W) / BRICK_COL_W; /* 48 / 2 colonne intercalée */
 
             nb = NbBrickColon[col];
 
@@ -1179,13 +1393,13 @@ void AffBrickBlockOnly(S32 block, S32 brick, S16 x, S16 y, S16 z) {
     adr += (brick << 2); /* 4 Bytes to Jump	*/
     adr += 2;
 
-    numbrick = LBA2_LE16(*(U16 *)adr); /* & 32767 */
+    numbrick = LBA2_LE16_UA((const void *)adr); /* & 32767 */
 
     if (numbrick AND numbrick != ForbidenBrick) {
         Map2Screen(x - StartXCube, y - StartYCube, z - StartZCube);
 
-        if (XScreen >= -24 AND XScreen < 640 AND YScreen >= -38 AND YScreen < 480) {
-            AffGraph(numbrick - 1, XScreen, YScreen, BufferBrick);
+        if (XScreen >= -BRICK_COL_W AND XScreen < BRICK_CLIP_X AND YScreen >= -BRICK_DY AND YScreen < BRICK_CLIP_Y) {
+            AffGraphNative(numbrick - 1, XScreen, YScreen, BufferBrick); // [renderscale] physical bank+coords
         }
     }
 }
@@ -1237,8 +1451,8 @@ void AffOneBrick(S32 x, S32 y, S32 z) {
     S16 zdeb;
     U8 codejeu;
 
-    xmin = 639;
-    ymin = 479;
+    xmin = ModeDesiredX - 1; // virtual: compared with ScreenXMin.. below
+    ymin = ModeDesiredY - 1;
     xmax = 0;
     ymax = 0;
 
@@ -1654,8 +1868,16 @@ void DecompColonne(U8 *pts, U8 *ptd) {
 
 //-------------------------------------------------------------------
 void Map2Screen(S32 x, S32 y, S32 z) {
+#ifdef LBA2_TARGET_N64
+    // [renderscale] half-res iso layer: floor(full/2). X stays a multiple
+    // of 12 so the column quantization in AffBrickBlock/DrawOverBrick still
+    // reconstructs XScreen exactly (col*12-12).
+    XScreen = 12 * (x - z) + 144;
+    YScreen = (12 * (z + x) - 15 * y + 226) >> 1;
+#else
     XScreen = 24 * (x - z) + 288;
     YScreen = 12 * (z + x) - 15 * y + 226;
+#endif
 }
 
 //-------------------------------------------------------------------

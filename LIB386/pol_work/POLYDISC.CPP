@@ -135,6 +135,8 @@ void Sph_Line_Transp(U32 screenY) {
     }
 }
 
+static void Fill_SpherePhys(S32 Type_Sphere, S32 Color_Sphere, S32 Centre_X, S32 Centre_Y, S32 Rayon, S32 zBufferValue);
+
 void Fill_Sphere(S32 Type_Sphere, S32 Color_Sphere, S32 Centre_X, S32 Centre_Y, S32 Rayon, S32 zBufferValue) {
     LIB386_TRACE_CPP("Fill_Sphere", "1", "type=%d col=%d cx=%d cy=%d r=%d zbuf=%d",
                      Type_Sphere, Color_Sphere, Centre_X, Centre_Y, Rayon, zBufferValue);
@@ -142,6 +144,17 @@ void Fill_Sphere(S32 Type_Sphere, S32 Color_Sphere, S32 Centre_X, S32 Centre_Y, 
     if (g_polyrec_recording)
         polyrec_record_fill_sphere(Type_Sphere, Color_Sphere, Centre_X, Centre_Y, Rayon, zBufferValue);
 #endif
+    // [renderscale] virtual centre/radius -> physical, physical clip
+    S32 clip[4];
+    RS_PushPhysClip(clip);
+    S32 r = RS_V2P(Rayon);
+    if (Rayon > 0 && r == 0)
+        r = 1;
+    Fill_SpherePhys(Type_Sphere, Color_Sphere, RS_V2P(Centre_X), RS_V2P(Centre_Y), r, zBufferValue);
+    RS_PopClip(clip);
+}
+
+static void Fill_SpherePhys(S32 Type_Sphere, S32 Color_Sphere, S32 Centre_X, S32 Centre_Y, S32 Rayon, S32 zBufferValue) {
     Sphere_Filler_Func Fill_Filler;
 
     // Select appropriate line drawing function based on flags and type

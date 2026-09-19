@@ -67,6 +67,16 @@ void CopyBlock(S32 x0, S32 y0, S32 x1, S32 y1, void *src, S32 xd, S32 yd,
         }
         height -= distanceToYMax;
     }
+    // [renderscale] clipping above is in virtual space; copy physically
+    {
+        S32 vx1 = x0 + (S32)width, vy1 = y0 + (S32)height;
+        x0 = RS_V2P(x0);
+        y0 = RS_V2P(y0);
+        xd = RS_V2P(xd);
+        yd = RS_V2P(yd);
+        width = RS_V2P(vx1) - x0;
+        height = RS_V2P(vy1) - y0;
+    }
     // Offset Src
     U8 *srcOffset = (U8 *)(TabOffLine[y0] + x0 + (U8 *)src);
     // Delta X

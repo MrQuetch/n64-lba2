@@ -26,6 +26,11 @@ S32 IncZ = 0;
 S32 ZBufBoxOverWrite2(S32 z0, S32 z1,
                       S32 xmin, S32 ymin,
                       S32 xmax, S32 ymax) {
+    // [renderscale] virtual bbox -> physical (Log/Screen/ZBuffer are physical)
+    xmin = RS_V2P(xmin);
+    ymin = RS_V2P(ymin);
+    xmax = RS_V2P(xmax);
+    ymax = RS_V2P(ymax);
     S32 deltaY = ymax - ymin + 1; // eax
     S32 deltaX = xmax - xmin + 1; // ebx
     // ASM: ESI = z1 * Factor (head), EDI = z0 * Factor (feet)

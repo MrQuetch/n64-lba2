@@ -21,8 +21,32 @@
 #include <strings.h>
 #include <sys/stat.h>
 
+#ifdef LBA2_TARGET_N64
+#include <libdragon.h>
+
+// WUT time-API shims: the WIIU-gated engine code (profiling heartbeat in
+// PERSO.CPP, blit timing) uses OSTime/OSGetSystemTime; map them to libdragon
+// ticks so those blocks compile unchanged on N64.
+typedef int64_t OSTime;
+static inline OSTime OSGetSystemTime(void) { return (OSTime)get_ticks(); }
+static inline int64_t OSTicksToMilliseconds(OSTime t) {
+    return (int64_t)((uint64_t)t / (TICKS_PER_SECOND / 1000));
+}
+static inline OSTime OSMillisecondsToTicks(int64_t ms) {
+    return (OSTime)((uint64_t)ms * (TICKS_PER_SECOND / 1000));
+}
+static inline int64_t OSTicksToMicroseconds(OSTime t) {
+    return (int64_t)((uint64_t)t / (TICKS_PER_SECOND / 1000000));
+}
+static inline void OSSleepTicks(OSTime t) { wait_ticks((unsigned long)t); }
+static inline void DCFlushRange(void *p, unsigned int len) {
+    data_cache_hit_writeback(p, len);
+}
+#define OSReport(...) debugf(__VA_ARGS__)
+#else
 #include <coreinit/time.h>
 #include <coreinit/thread.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,12 +64,21 @@ static inline const char *SDL_GetError(void)            { return ""; }
 
 // Wii U system tick → ms. OSGetSystemTime() returns OSTime (CPU ticks);
 // OSTicksToMilliseconds() converts to int64_t. SDL_GetTicks returns Uint32.
+#ifdef LBA2_TARGET_N64
+static inline U32 SDL_GetTicks(void) {
+    return (U32)get_ticks_ms();
+}
+static inline void SDL_Delay(U32 ms) {
+    wait_ms(ms);
+}
+#else
 static inline U32 SDL_GetTicks(void) {
     return (U32)OSTicksToMilliseconds(OSGetSystemTime());
 }
 static inline void SDL_Delay(U32 ms) {
     OSSleepTicks(OSMillisecondsToTicks((int64_t)ms));
 }
+#endif
 
 static inline SDL_Keymod SDL_GetModState(void) { return SDL_KMOD_NONE; }
 
@@ -60,6 +93,18 @@ static inline SDL_Keymod SDL_GetModState(void) { return SDL_KMOD_NONE; }
 // exist; fall back to the .wuhb romfs at `/vol/content/`, which carries the
 // essential game data plus a `saves/` dir (read-only — good enough for
 // render/debug iteration, not for persisting saves).
+#ifdef LBA2_TARGET_N64
+// N64: all assets live in the DFS filesystem inside the ROM ("rom:/" devoptab
+// registered by dfs_init in the backend). Saves go to cartridge SRAM later;
+// V1 points the pref path at a rom:/saves/ placeholder (read-only).
+static inline int WiiU_SdRootPresent(void) { return 0; }
+static inline char *SDL_GetBasePath(void) {
+    const char *p = "rom:/";
+    char *r = (char *)malloc(strlen(p) + 1);
+    if (r) strcpy(r, p);
+    return r;
+}
+#else
 static inline int WiiU_SdRootPresent(void) {
     static int s_checked = 0;
     static int s_present = 0;
@@ -77,11 +122,18 @@ static inline char *SDL_GetBasePath(void) {
     if (r) strcpy(r, p);
     return r;
 }
+#endif
 static inline char *SDL_GetCurrentDirectory(void) {
     return SDL_GetBasePath();
 }
 static inline char *SDL_GetPrefPath(const char *org, const char *app) {
     (void)org; (void)app;
+#ifdef LBA2_TARGET_N64
+    const char *n64p = "rom:/saves/";
+    char *n64r = (char *)malloc(strlen(n64p) + 1);
+    if (n64r) strcpy(n64r, n64p);
+    return n64r;
+#endif
     // Real SDL3 SDL_GetPrefPath creates the directory on demand. Match that
     // semantic so DIRECTORIES.CPP's ExistsFileOrDir() check on the user dir
     // doesn't bail with "Invalid user directory" on a fresh SD install.

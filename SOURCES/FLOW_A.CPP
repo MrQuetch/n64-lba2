@@ -10,12 +10,17 @@ void BoxFlow(S32 x, S32 y, S32 coul) {
         return;
     }
 
+#if RS_SHIFT
+    // [renderscale] a 2x2 virtual dot is one physical pixel
+    ((U8 *)Log)[TabOffLine[RS_V2P(y)] + RS_V2P(x)] = coul;
+#else
     U8 *dst = (U8 *)Log + TabOffLine[y] + x;
     U32 screenWidth = TabOffLine[1];
     dst[0] = coul;
     dst[1] = coul;
     dst[screenWidth] = coul;
     dst[screenWidth + 1] = coul;
+#endif
 }
 
 void ShadeBoxBlk(S32 x0, S32 y0, S32 x1, S32 y1, S32 deccoul) {
@@ -35,6 +40,12 @@ void ShadeBoxBlk(S32 x0, S32 y0, S32 x1, S32 y1, S32 deccoul) {
     if (y1 > ClipYMax) {
         y1 = ClipYMax;
     }
+
+    // [renderscale] clipped in virtual space above, shaded physically
+    x0 = RS_V2P(x0);
+    y0 = RS_V2P(y0);
+    x1 = RS_V2P(x1);
+    y1 = RS_V2P(y1);
 
     S32 deltaY = y1 - y0 + 1;
     S32 deltaX = x1 - x0 + 1;
@@ -58,6 +69,13 @@ void ShadeBoxBlk(S32 x0, S32 y0, S32 x1, S32 y1, S32 deccoul) {
 
 void CopyBlockShade(S32 x0, S32 y0, S32 x1, S32 y1, U8 *src,
                     S32 xd, S32 yd, U8 *dst, S32 shade) {
+    // [renderscale] virtual rectangles -> physical
+    x0 = RS_V2P(x0);
+    y0 = RS_V2P(y0);
+    x1 = RS_V2P(x1);
+    y1 = RS_V2P(y1);
+    xd = RS_V2P(xd);
+    yd = RS_V2P(yd);
     U8 *srcPtr = src + TabOffLine[y0] + x0;
     U8 *dstPtr = dst + TabOffLine[yd] + xd;
 

@@ -273,7 +273,16 @@ void AffichageObjetDecorsZV(void) {
 
 // Version masques compris
 
+#ifdef LBA2_TARGET_N64
+extern "C" U32 N64ProfTicks(void);
+U32 g_profDecorsTicks = 0, g_profDecorSwapTicks = 0, g_profDecorsDrawn = 0; // [hangprof]
+#endif
+
 void AffichageObjetDecorsZBuf(void) {
+#ifdef LBA2_TARGET_N64
+    U32 _dt0 = N64ProfTicks();
+    struct _DecScope { U32 t; ~_DecScope() { g_profDecorsTicks += N64ProfTicks() - t; } } _ds = {_dt0};
+#endif
     S32 i;
     T_LIST_TRI *ptrtri;
     T_DECORS *ptrobj;
@@ -381,9 +390,16 @@ void AffichageObjetDecorsZBuf(void) {
         // .OBL bodies are raw LE T_BODY_HEADER blobs. WiiU_SwapBodyHeader is
         // idempotent (SizeHeader sentinel), so calling it on every fetch also
         // covers HQR cache evictions that reload fresh LE data from disk.
+#ifdef LBA2_TARGET_N64
+        U32 _st0 = N64ProfTicks();
+#endif
         void *oblBody = HQR_Get(HQR_Isle_Obj, ptrobj->Body & 0xFFFF);
 #ifdef LBA2_TARGET_WIIU
         WiiU_SwapBodyHeader(oblBody);
+#endif
+#ifdef LBA2_TARGET_N64
+        g_profDecorSwapTicks += N64ProfTicks() - _st0;
+        g_profDecorsDrawn++;
 #endif
 
         if (BodyDisplay(ptrobj->Xworld,

@@ -414,8 +414,8 @@ U8 *SearchImpact(char *name) {
 // disk. Swap on read; the stream is never written back at runtime.
 #ifdef LBA2_TARGET_WIIU
 #include <SYSTEM/wiiu_endian.h>
-#define IMP_RD16(p) ((S16)LBA2_LE16(*(U16 *)(p)))
-#define IMP_RD32(p) ((S32)LBA2_LE32(*(U32 *)(p)))
+#define IMP_RD16(p) ((S16)LBA2_LE16_UA((const void *)(p)))
+#define IMP_RD32(p) ((S32)LBA2_LE32_UA((const void *)(p)))
 #else
 #define IMP_RD16(p) (*(S16 *)(p))
 #define IMP_RD32(p) (*(S32 *)(p))

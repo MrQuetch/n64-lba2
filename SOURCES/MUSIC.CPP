@@ -243,7 +243,23 @@ void InitTabTracks(void) {
 // Cette fonction doit orienter la musique soit sur une Track Audio, soit
 // sur du Streaming ADPCM
 
+#ifdef LBA2_TARGET_N64
+extern "C" U32 N64ProfNowMs(void); // [hangprof]
+struct N64ProfMusicScope {
+    U32 t0;
+    S32 num;
+    N64ProfMusicScope(S32 n) : t0(N64ProfNowMs()), num(n) {}
+    ~N64ProfMusicScope() {
+        U32 dt = N64ProfNowMs() - t0;
+        if (dt >= 30) LogPrintf("[hangprof] PlayMusic(%d)=%lu ms\n", (int)num, (unsigned long)dt);
+    }
+};
+#endif
+
 void PlayMusic(S32 num, S32 playit) {
+#ifdef LBA2_TARGET_N64
+    N64ProfMusicScope _pmScope(num);
+#endif
     NextMusic = -1;
 
     if (num != -1) {
@@ -367,7 +383,12 @@ void ResumeMusic(S32 fade) {
     }
 
 #ifdef CDROM
+#ifndef LBA2_TARGET_N64
+    // On PC "CD" audio and streamed jingles are two different players, so a
+    // resume of the CD first kills any jingle. On N64 both go through the
+    // same wav64 stream: StopMusic() here would close the paused track.
     StopMusic();
+#endif
     ResumeCD();
 #endif
     ResumeStream();

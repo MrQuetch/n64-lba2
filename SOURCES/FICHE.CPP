@@ -300,10 +300,10 @@ void InitBodyZV(T_OBJET *ptrobj) {
 // model → it vanishes the moment it starts walking).
 #ifdef LBA2_TARGET_WIIU
 #define GET_S16                       \
-    ((S16)LBA2_LE16(*(U16 *)ptrc));   \
+    ((S16)LBA2_LE16_UA((const void *)ptrc));   \
     ptrc += 2
 #define GET_S32                       \
-    ((S32)LBA2_LE32(*(U32 *)ptrc));   \
+    ((S32)LBA2_LE32_UA((const void *)ptrc));   \
     ptrc += 4
 #else
 #define GET_S16     \
@@ -399,7 +399,7 @@ void GereAnimAction(T_OBJET *ptrobj, U8 numobj) {
 
         case F_SAMPLE:
             if (testframe == *ptrc++) {
-                HQ_3D_MixSample((S16)LBA2_LE16(*(U16 *)ptrc), 0x1000, 0, 1,
+                HQ_3D_MixSample((S16)LBA2_LE16_UA((const void *)ptrc), 0x1000, 0, 1,
                                 ptrobj->Obj.X, ptrobj->Obj.Y, ptrobj->Obj.Z);
             }
             ptrc += 2;
@@ -992,7 +992,7 @@ S32 SearchAnim(U16 numanim, S32 numobj) {
         switch (command) {
         case F_ANIM:
             // PtrFile3D body content is LE on disk; numgene is U16 LE.
-            numgene = LBA2_LE16(*(U16 *)ptrc); // lit num name generique
+            numgene = LBA2_LE16_UA((const void *)ptrc); // lit num name generique
             ptrc += 2;
 
             if (numanim == numgene) // ok trouve
@@ -1001,7 +1001,7 @@ S32 SearchAnim(U16 numanim, S32 numobj) {
 
                 // hqranim is S16 LE — without swap, returned index is garbage
                 // and HQR_Get() picks an out-of-range record.
-                hqranim = (S16)LBA2_LE16(*(U16 *)ptrc);
+                hqranim = (S16)LBA2_LE16_UA((const void *)ptrc);
 
                 ptrc += 2;
 
@@ -1081,7 +1081,7 @@ S32 SearchBody(U8 numbody, S32 numobj) {
                 // PtrFile3D body content fields are LE on disk; on PPC each
                 // S16 read must be byte-swapped or the resulting hqrbody is
                 // garbage and HQR_Get(HQR_Bodys, garbage) trashes the pool.
-                hqrbody = (S16)LBA2_LE16(*(U16 *)ptrc);
+                hqrbody = (S16)LBA2_LE16_UA((const void *)ptrc);
 
                 ptrc += 2;
 
@@ -1090,17 +1090,17 @@ S32 SearchBody(U8 numbody, S32 numobj) {
                 if (*ptrc++) // body possede action ?
                 {
                     if (*ptrc++ == F_ZV) {
-                        M_XMin = (S16)LBA2_LE16(*(U16 *)ptrc);
+                        M_XMin = (S16)LBA2_LE16_UA((const void *)ptrc);
                         ptrc += 2;
-                        M_YMin = (S16)LBA2_LE16(*(U16 *)ptrc);
+                        M_YMin = (S16)LBA2_LE16_UA((const void *)ptrc);
                         ptrc += 2;
-                        M_ZMin = (S16)LBA2_LE16(*(U16 *)ptrc);
+                        M_ZMin = (S16)LBA2_LE16_UA((const void *)ptrc);
                         ptrc += 2;
-                        M_XMax = (S16)LBA2_LE16(*(U16 *)ptrc);
+                        M_XMax = (S16)LBA2_LE16_UA((const void *)ptrc);
                         ptrc += 2;
-                        M_YMax = (S16)LBA2_LE16(*(U16 *)ptrc);
+                        M_YMax = (S16)LBA2_LE16_UA((const void *)ptrc);
                         ptrc += 2;
-                        M_ZMax = (S16)LBA2_LE16(*(U16 *)ptrc);
+                        M_ZMax = (S16)LBA2_LE16_UA((const void *)ptrc);
                         ptrc += 2;
                     }
                 }

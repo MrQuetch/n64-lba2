@@ -27,6 +27,24 @@
 #  define LBA2_LE16(x)  (x)
 #endif
 
+#include <SYSTEM/ADELINE_TYPES.H> // U16/U32 for the inline readers
+#include <string.h>               // memcpy (unaligned-safe readers below)
+
+// Unaligned-safe LE readers. The bare `LBA2_LE16(*(U16 *)p)` pattern works on
+// PPC (tolerates unaligned integer loads) but traps on MIPS (N64): use these
+// for byte-stream cursors. GCC lowers the memcpy to lwl/lwr pairs on VR4300,
+// so there is no function-call or trap overhead on any platform.
+static inline U16 LBA2_LE16_UA(const void *p) {
+    U16 v;
+    memcpy(&v, p, 2);
+    return LBA2_LE16(v);
+}
+static inline U32 LBA2_LE32_UA(const void *p) {
+    U32 v;
+    memcpy(&v, p, 4);
+    return LBA2_LE32(v);
+}
+
 #ifdef LBA2_TARGET_WIIU
 // In-place byte-swap of the leading U32 offset table embedded in HQR sub-records
 // like RESS_FILE3D. The first offset itself encodes the table length: if there

@@ -1260,10 +1260,21 @@ void LoadFile3dObjects() {
 // FlagChgCube == 1 : zone de chg cube recupere pos relative
 // FlagChgCube == 2 : instruction chg cube positionne sur saved StartPos
 
+#ifdef LBA2_TARGET_WIIU
+extern "C" U32 N64ProfNowMs(void); // [hangprof] def. in N64_BACKEND.CPP
+extern "C" void N64ProfHeapLog(const char *tag);
+#endif
+
 void ChangeCube() {
     T_OBJET *ptrobj = &ListObjet[NUM_PERSO];
     S32 oldcube;
     S32 flagload;
+#ifdef LBA2_TARGET_WIIU
+    // [hangprof] times ChangeCube (the hang felt outdoors) and isolates the
+    // PtrInitGrille phase (grid/brick loading, prime suspect for the stall).
+    U32 _ccMs0 = N64ProfNowMs();
+    U32 _ccGrilleMs = 0;
+#endif
 
     APtObj = ptrobj;
 
@@ -1358,7 +1369,13 @@ void ChangeCube() {
     // load gri
 
     WIIU_TRACE("ChangeCube: PtrInitGrille(NewCube) enter");
+#ifdef LBA2_TARGET_WIIU
+    U32 _grMs0 = N64ProfNowMs();
+#endif
     PtrInitGrille(NewCube); /*	HQR	*/
+#ifdef LBA2_TARGET_WIIU
+    _ccGrilleMs = N64ProfNowMs() - _grMs0;
+#endif
     WIIU_TRACE("ChangeCube: PtrInitGrille exit");
     WIIU_CANARY("after ChangeCube PtrInitGrille");
     WIIU_PTRCANARY("after ChangeCube PtrInitGrille");
@@ -1432,6 +1449,13 @@ void ChangeCube() {
 #ifdef LBA2_TARGET_WIIU
         LogPrintf("[ChangeCube] pre-PtrReajustPos Nxw=%d Nyw=%d Nzw=%d Shadow={%d,%d,%d}\n",
                   (int)Nxw, (int)Nyw, (int)Nzw, (int)ShadowX, (int)ShadowY, (int)ShadowZ);
+        // [scenechg] Ipotesi n.1: la variante di collisione bindata (INT vs EXT)
+        // deve combaciare con CubeMode. Mismatch qui = bug confermato.
+        LogPrintf("[scenechg] reajust CubeMode=%d(EXT=%d) colbrick=%s reajustFlag=%d colPtr=%p reajustPtr=%p\n",
+                  (int)CubeMode, (int)CUBE_EXTERIEUR,
+                  (PtrWorldColBrick == WorldColBrick) ? "INT" : "EXT",
+                  (int)FlagReajustPosTwinsen,
+                  (void *)PtrWorldColBrick, (void *)PtrReajustPos);
 #endif
         PtrReajustPos(PtrWorldColBrick(Nxw, Nyw, Nzw));
         WIIU_TRACE("ChangeCube: PtrReajustPos exit");
@@ -1575,6 +1599,13 @@ void ChangeCube() {
 
     LastValidePos = ValidePos = FALSE;
     ptrobj->CarryBy = -1;
+#ifdef LBA2_TARGET_WIIU
+    LogPrintf("[hangprof] ChangeCube(cube=%d) total=%u ms | PtrInitGrille=%u ms\n",
+              (int)NewCube, (unsigned)(N64ProfNowMs() - _ccMs0), (unsigned)_ccGrilleMs);
+#endif
+#ifdef LBA2_TARGET_N64
+    N64ProfHeapLog("ChangeCube");
+#endif
     WIIU_TRACE("ChangeCube: end of function");
 }
 
@@ -5536,7 +5567,24 @@ void AffNbFps(void) {
 //▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
 /*──────────────────────────────────────────────────────────────────────────*/
 
+#ifdef LBA2_TARGET_WIIU
+extern "C" U32 N64ProfTicks(void);
+extern "C" void N64ProfAddAffTicks(U32);
+extern "C" void N64ProfAddClsTicks(U32);
+extern "C" void N64ProfAddRefreshTicks(U32);
+extern "C" void N64ProfAddCopyTicks(U32);
+extern "C" void N64ProfAddSortTicks(U32);
+struct N64ProfAffScope { // RAII: accumulates the AffScene duration across every return
+    U32 t0;
+    N64ProfAffScope() : t0(N64ProfTicks()) {}
+    ~N64ProfAffScope() { N64ProfAddAffTicks(N64ProfTicks() - t0); }
+};
+#endif
+
 void AffScene(S32 flagflip) {
+#ifdef LBA2_TARGET_WIIU
+    N64ProfAffScope _affScope;
+#endif
     S32 n, c, cmpt;
     S32 dx, dy;
     T_OBJET *ptrobj;
@@ -5640,17 +5688,29 @@ startaffscene:
         AFF_TRACE("LockTimer exit, BoxReset enter");
         BoxReset();
         AFF_TRACE("BoxReset exit, Cls enter");
+#ifdef LBA2_TARGET_WIIU
+        { U32 _t = N64ProfTicks(); Cls(); N64ProfAddClsTicks(N64ProfTicks() - _t); }
+#else
         Cls();
+#endif
         AFF_TRACE("Cls exit, RefreshGrille enter");
 
+#ifdef LBA2_TARGET_WIIU
+        { U32 _t = N64ProfTicks(); RefreshGrille(); N64ProfAddRefreshTicks(N64ProfTicks() - _t); }
+#else
         RefreshGrille();
+#endif
 
         AFF_TRACE("RefreshGrille exit, ChangeIncrustPos enter");
         ChangeIncrustPos(oldxporg, oldyporg, XpOrgw, YpOrgw);
         AFF_TRACE("ChangeIncrustPos exit, CopyScreen enter");
         //			HQ_ChangeBalanceSamples( oldxporg, oldyporg ) ;
 
+#ifdef LBA2_TARGET_WIIU
+        { U32 _t = N64ProfTicks(); CopyScreen(Log, Screen); N64ProfAddCopyTicks(N64ProfTicks() - _t); }
+#else
         CopyScreen(Log, Screen);
+#endif
         AFF_TRACE("CopyScreen exit");
 
         if (flagflip == AFF_ALL_FLIP
@@ -6014,7 +6074,14 @@ startaffscene:
     PtrMap = ObjPtrMap = BufferTexture;
     RepMask = 0xFFFF;
 
+#ifdef LBA2_TARGET_WIIU
+    U32 _sortT = N64ProfTicks();
+    S32 _sortRes = BaseSort();
+    N64ProfAddSortTicks(N64ProfTicks() - _sortT);
+    if (_sortRes) {
+#else
     if (BaseSort()) {
+#endif
         AFF_TRACE("BaseSort returned TRUE -> goto startaffscene");
         // NumObjFollow masqué on
         // doit redessiner la camera
@@ -6682,6 +6749,47 @@ S32 GereZoneChangeCube(T_OBJET *ptrobj, T_ZONE *ptrz) {
                 FlagReajustPosTwinsen = FALSE;
             else
                 FlagReajustPosTwinsen = TRUE;
+
+#ifdef LBA2_TARGET_WIIU
+            // [scenechg] Identity + geometry of the zone that fires: if the good and
+            // bad runs show different idx/ptr/bbox => a different zone fires (which
+            // zone/position problem); same zone but different Info3 => mutated data.
+            LogPrintf("[scenechg] zoneChgCube idx=%d @%p Num=%d Type=%d bbox={%d,%d,%d..%d,%d,%d} Info0=%d Info1=%d Info2=%d Info3=%d Info5=%d Info6=%d Info7=%d in={%d,%d,%d} rot={%d,%d} NewPos={%d,%d,%d} beta=%d flagx=%d flagz=%d reajust=%d\n",
+                      (int)(ptrz - ListZone), (void *)ptrz,
+                      (int)ptrz->Num, (int)ptrz->Type,
+                      (int)ptrz->X0, (int)ptrz->Y0, (int)ptrz->Z0,
+                      (int)ptrz->X1, (int)ptrz->Y1, (int)ptrz->Z1,
+                      (int)ptrz->Info0, (int)ptrz->Info1, (int)ptrz->Info2, (int)ptrz->Info3,
+                      (int)ptrz->Info5, (int)ptrz->Info6, (int)ptrz->Info7,
+                      (int)x, (int)y, (int)z,
+                      (int)X0, (int)Z0,
+                      (int)NewPosX, (int)NewPosY, (int)NewPosZ, (int)newbeta,
+                      (int)flagx, (int)flagz, (int)FlagReajustPosTwinsen);
+
+            // [scenechg] THE NET for the beta=2048 heisenbug:
+            //  - info3_lw  = ptrz->Info3 as the game reads it (lw, goes through
+            //    the unaligned-access emulator when the zone is misaligned)
+            //  - info3_bytes = the same field read byte by byte (never emulated)
+            //  Different => EMU-MISREAD (read bug). Equal but the zone table CRC
+            //  changed since load => ZONE-MUTATED (somebody wrote over it). One
+            //  single occurrence is enough to pin down the mechanism.
+            {
+                extern U32 g_zoneChkLoad;
+                extern S32 g_zoneChkBytes;
+                U8 *ib = (U8 *)&ptrz->Info3;
+                S32 info3_bytes = (S32)(((U32)ib[0] << 24) | ((U32)ib[1] << 16) |
+                                        ((U32)ib[2] << 8) | (U32)ib[3]);
+                U8 *zb = (U8 *)ListZone;
+                U32 cknow = 0x811c9dc5u;
+                for (S32 bi = 0; bi < g_zoneChkBytes; bi++)
+                    cknow = (cknow ^ zb[bi]) * 16777619u;
+                LogPrintf("[scenechg] CHECK info3_lw=%d info3_bytes=%d %s | zoneCRC load=%08X now=%08X %s\n",
+                          (int)ptrz->Info3, (int)info3_bytes,
+                          ((S32)ptrz->Info3 == info3_bytes) ? "OK" : "EMU-MISREAD!!",
+                          (unsigned)g_zoneChkLoad, (unsigned)cknow,
+                          (g_zoneChkLoad == cknow) ? "OK" : "ZONE-MUTATED!!");
+            }
+#endif
 
             FlagChgCube = 1;
             return TRUE;

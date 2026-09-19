@@ -99,6 +99,8 @@ void Clear3dExt() {
 /*──────────────────────────────────────────────────────────────────────────*/
 // Positionne la caméra pour la 3d Extérieure
 void Init3DExtView(void) {
+    // [renderscale] projection stays in virtual 640x480 space; the LIB386
+    // pixel cores downscale (see SVGA/SCREEN.H).
     SetProjection(320, 240, CLIP_NEAR, ChampX, ChampZ);
     SetFollowCamera(VueOffsetX, VueOffsetY, VueOffsetZ,
                     AlphaCam, BetaCam, GammaCam,
@@ -108,6 +110,11 @@ void Init3DExtView(void) {
 }
 
 /*──────────────────────────────────────────────────────────────────────────*/
+#ifdef LBA2_TARGET_WIIU
+extern "C" U32 N64ProfTicks(void);            // [renderprof] def. in N64_BACKEND.CPP
+extern "C" void N64ProfAddTerrainTicks(U32);
+#endif
+
 // a appeler a chaque fois que l'on change de cube en 3d exterieur
 // pour réinitialiser la caméra et les pointeurs de fonctions
 void Init3DExtGame() {
@@ -344,7 +351,15 @@ void AffGrilleExt() {
 
     ManageSystem(); // for streaming
 
+#ifdef LBA2_TARGET_WIIU
+    {
+        U32 _pt = N64ProfTicks();
+        AffichageTerrainZBuf();
+        N64ProfAddTerrainTicks(N64ProfTicks() - _pt);
+    }
+#else
     AffichageTerrainZBuf();
+#endif
 
     ManageSystem(); // for streaming
 

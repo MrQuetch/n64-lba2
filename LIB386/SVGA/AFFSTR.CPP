@@ -266,6 +266,35 @@ U8 Font8x8[256 * 8] = {
     0, 0, 60, 60, 60, 60, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0};
 
+#if RS_SHIFT
+// [renderscale] 8x8 debug/menu font at virtual coordinates: each glyph
+// becomes a 4x4 physical cell (2x2 OR-downsample), so layouts computed with
+// SizeChar in virtual space stay consistent.
+void AffString(S32 x, S32 y, char *str) {
+    LIB386_TRACE_CPP("AffString", "1", "x=%d y=%d str=%p", x, y, (void *)str);
+    if (!str)
+        return;
+    const U32 pitch = TabOffLine[1];
+    const U32 cell = SizeChar >> 1; // 4
+    PTR_U8 ScreenPtr = (PTR_U8)Log + TabOffLine[RS_V2P(y)] + RS_V2P(x);
+    U8 character;
+    while ((character = *str++) != 0) {
+        PTR_U8 font = &Font8x8[character * SizeChar];
+        PTR_U8 ptr = ScreenPtr;
+        for (U32 r = 0; r < cell; ++r) {
+            U8 bits = font[2 * r] | font[2 * r + 1];
+            for (U32 c = 0; c < cell; ++c) {
+                if (bits & (0xC0 >> (2 * c)))
+                    ptr[c] = TextInk;
+                else if (TextPaper != 0xFF)
+                    ptr[c] = TextPaper;
+            }
+            ptr += pitch;
+        }
+        ScreenPtr += cell;
+    }
+}
+#else
 void AffString(S32 x, S32 y, char *str) {
     LIB386_TRACE_CPP("AffString", "1", "x=%d y=%d str=%p", x, y, (void *)str);
     U8 character;
@@ -302,6 +331,7 @@ void AffString(S32 x, S32 y, char *str) {
         ScreenPtr += SizeChar;
     }
 }
+#endif /* RS_SHIFT */
 
 void AffStringToBuffer(U8 *dst, U32 pitch, S32 x, S32 y, const char *str, U8 ink) {
     if (!dst || !str)

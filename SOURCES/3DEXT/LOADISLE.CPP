@@ -181,7 +181,26 @@ void LoadIsland() {
 
 /*──────────────────────────────────────────────────────────────────────────*/
 
+#ifdef LBA2_TARGET_WIIU
+extern "C" U32 N64ProfNowMs(void);
+struct N64ProfCubeScope { // [hangprof] logs slow LoadCube calls (chunk streamed from ROM)
+    U32 t0;
+    S32 x, y;
+    N64ProfCubeScope(S32 X, S32 Y) : t0(N64ProfNowMs()), x(X), y(Y) {}
+    ~N64ProfCubeScope() {
+        U32 d = N64ProfNowMs() - t0;
+        { extern U32 g_loadCubeMs, g_loadCubeCount; g_loadCubeMs += d; g_loadCubeCount++; }
+        if (d >= 30)
+            LogPrintf("[hangprof] LoadCube(%d,%d) = %u ms (chunk stream da ROM)\n",
+                      (int)x, (int)y, (unsigned)d);
+    }
+};
+#endif
+
 S32 LoadCube(S32 x, S32 y) {
+#ifdef LBA2_TARGET_WIIU
+    N64ProfCubeScope _cubeScope(x, y);
+#endif
     S32 index;
 
     index = y * 16 + x;

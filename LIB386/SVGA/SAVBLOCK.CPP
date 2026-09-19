@@ -7,6 +7,10 @@
 
 void SaveBlock(void *screen, void *buffer, S32 x0, S32 y0, S32 x1,
                S32 y1) {
+    x0 = RS_V2P(x0); // [renderscale]
+    y0 = RS_V2P(y0);
+    x1 = RS_V2P(x1);
+    y1 = RS_V2P(y1);
     LIB386_TRACE_CPP("SaveBlock", "1", "scr=%p buf=%p x0=%d y0=%d x1=%d y1=%d", screen, buffer, x0, y0, x1, y1);
     U8 *dst = (U8 *)buffer;
     U8 *src = (U8 *)screen + TabOffLine[y0] + x0;

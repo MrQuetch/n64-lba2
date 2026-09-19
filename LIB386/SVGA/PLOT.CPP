@@ -15,7 +15,7 @@ void Plot(S32 x0, S32 y0, S32 coul) {
         return;
     }
 
-    ((U8 *)Log)[y0 * ModeDesiredX + x0] = (U8)coul;
+    ((U8 *)Log)[TabOffLine[RS_V2P(y0)] + RS_V2P(x0)] = (U8)coul;
 }
 
 S32 GetPlot(S32 x0, S32 y0) {
@@ -24,7 +24,7 @@ S32 GetPlot(S32 x0, S32 y0) {
         return 0;
     }
 
-    return ((U8 *)Log)[y0 * ModeDesiredX + x0];
+    return ((U8 *)Log)[TabOffLine[RS_V2P(y0)] + RS_V2P(x0)];
 }
 
 // =============================================================================

@@ -40,7 +40,11 @@ T_MEM ListMem[] = {
     {(void **)&TabBlock, 0},        // Calculé dynamiquement (GRILLE.CPP -> InitBufferCube())
     {(void **)&ListFlowDots, sizeof(S_ONE_DOT) * MAX_FLOW_DOTS *MAX_FLOWS},
     {(void **)&PtrXplPalette, SIZE_XPL},
+#ifdef LBA2_TARGET_N64
+    {(void **)&BufferSmack, 16}, // no FMV on N64 (PLAYACF stub): keep the pointer valid only
+#else
     {(void **)&BufferSmack, 100000L}, // tempo ?
+#endif
 };
 
 S32 SizeOfMemAllocated; // calculée dynamiquement
@@ -179,6 +183,32 @@ void AdjustHQRMem(void) {
         MapSommetYMem = MAX_MAP_SOMMETY_MEM;
     if (MapIntensityMem > MAX_MAP_INTENSITY_MEM)
         MapIntensityMem = MAX_MAP_INTENSITY_MEM;
+
+#ifdef LBA2_TARGET_N64
+    // The fraction-of-AvailableMem scheme above (with the 1 MB budget the N64
+    // backend reports) leaves the island pools at their minima: MapPGround
+    // holds ONE cube (32 KB) while the outdoor renderer needs the current
+    // cube plus its 8 neighbours every frame -> the caches thrash, every
+    // frame reloads and re-swaps 9 cubes from ROM (~1 s/frame for several
+    // seconds when entering a new area). Size the per-cube pools for 9 cubes
+    // and give decor bodies / character bodies some headroom; the RAM comes
+    // from the physical-size Phys buffer and the unused Smacker buffer.
+    {
+        const S32 nbCubes = 9;
+        MapPGroundMem = nbCubes * MIN_MAP_PGROUND_MEM + 2048;                // 9 x 32768
+        MapSommetYMem = nbCubes * MIN_MAP_SOMMETY_MEM + 1024;                // 9 x 8450
+        MapIntensityMem = nbCubes * MIN_MAP_INTENSITY_MEM + 1024;            // 9 x 4225
+        ListTexDefMem = nbCubes * sizeinfo.MaxSizeTexDef + 1024;
+        ListDecorsMem = nbCubes * sizeinfo.MaxSizeListDecors + 1024;
+        CubeInfosMem = MAX_CUBE_INFOS_MEM;
+        IsleObjMem = 300000L;
+        BodyMem = 160000L;
+        AnimMem = 80000L;
+        LogPrintf("[AdjustHQRMem] N64 pools: pground=%ld sommety=%ld lum=%ld texdef=%ld decors=%ld isleobj=%ld body=%ld anim=%ld\n",
+                  (long)MapPGroundMem, (long)MapSommetYMem, (long)MapIntensityMem, (long)ListTexDefMem,
+                  (long)ListDecorsMem, (long)IsleObjMem, (long)BodyMem, (long)AnimMem);
+    }
+#endif
 }
 
 //▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀

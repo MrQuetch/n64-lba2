@@ -19,7 +19,17 @@ S32 LastCubeMode = 0; // 0-->Intérieur - 1-->Extérieur
 // GET_* must byte-swap on read or the parser misaligns and NbObjets/CubeStartX
 // etc come out as garbage. Single-byte GET_S8 is endian-agnostic.
 #define GET_S8 (*PtrSce++)
-#ifdef LBA2_TARGET_WIIU
+#ifdef LBA2_TARGET_N64
+// MIPS traps on unaligned loads: the direct *(U16*)/(U32*) casts of the Wii U
+// branch would raise an address-error exception whenever PtrSce is odd.
+// Read through memcpy instead (GCC lowers it to lwl/lwr pairs on VR4300 —
+// unaligned-safe with no function-call overhead), then LE-swap like Wii U.
+#include <string.h>
+static inline U16 N64ReadLE16(const U8 *p) { U16 v; memcpy(&v, p, 2); return LBA2_LE16(v); }
+static inline U32 N64ReadLE32(const U8 *p) { U32 v; memcpy(&v, p, 4); return LBA2_LE32(v); }
+#define GET_S16 ((S16)N64ReadLE16(PtrSce)); PtrSce += 2
+#define GET_U32 (N64ReadLE32(PtrSce));      PtrSce += 4
+#elif defined(LBA2_TARGET_WIIU)
 #define GET_S16 ((S16)LBA2_LE16(*(U16 *)PtrSce)); PtrSce += 2
 #define GET_U32 (LBA2_LE32(*(U32 *)PtrSce));      PtrSce += 4
 #else
@@ -60,6 +70,14 @@ void	RestoreDiskEnv()
 	  ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀  ▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀     ▀▀   ▀▀▀▀▀ ▀▀▀▀▀
  *══════════════════════════════════════════════════════════════════════════*/
 /*──────────────────────────────────────────────────────────────────────────*/
+#ifdef LBA2_TARGET_WIIU
+// [scenechg] beta=2048 heisenbug: byte-wise (emulator-free) checksum of the
+// zone table at load time, to tell at run time a misread by the unaligned-
+// access emulator from a real mutation of the zone memory. See GereZoneChangeCube.
+U32 g_zoneChkLoad = 0;
+S32 g_zoneChkBytes = 0;
+#endif
+
 S32 LoadScene(S32 numscene) {
     T_OBJET *ptrobj;
     T_ZONE *ptrz;
@@ -326,6 +344,37 @@ S32 LoadScene(S32 numscene) {
             break;
         }
     }
+
+#ifdef LBA2_TARGET_WIIU
+    // [scenechg] Layout of the cube-change (Type 0) / camera (Type 1) zones of
+    // the loaded scene: compares the cellar exits between the 1st and 2nd visit.
+    {
+        T_ZONE *zd = ListZone;
+        S32 zn;
+        for (zn = 0; zn < NbZones; zn++, zd++) {
+            if (zd->Type == 0 OR zd->Type == 1)
+                LogPrintf("[scenechg] LoadScene(cube=%d) zone idx=%d Type=%d Num=%d bbox={%d,%d,%d..%d,%d,%d} Info0=%d Info1=%d Info2=%d Info3=%d\n",
+                          (int)NewCube, (int)zn, (int)zd->Type, (int)zd->Num,
+                          (int)zd->X0, (int)zd->Y0, (int)zd->Z0,
+                          (int)zd->X1, (int)zd->Y1, (int)zd->Z1,
+                          (int)zd->Info0, (int)zd->Info1, (int)zd->Info2, (int)zd->Info3);
+        }
+
+        // FNV-1a byte-wise (U8 reads NEVER go through the unaligned-access
+        // emulator => reflects the real memory contents).
+        {
+            U8 *zb = (U8 *)ListZone;
+            S32 nby = NbZones * (S32)sizeof(T_ZONE);
+            U32 ck = 0x811c9dc5u;
+            for (S32 bi = 0; bi < nby; bi++)
+                ck = (ck ^ zb[bi]) * 16777619u;
+            g_zoneChkLoad = ck;
+            g_zoneChkBytes = nby;
+            LogPrintf("[scenechg] LoadScene(cube=%d) zoneCRC=%08X bytes=%d base=%p\n",
+                      (int)NewCube, (unsigned)ck, (int)nby, (void *)ListZone);
+        }
+    }
+#endif
 
     // point track: TRACK
 

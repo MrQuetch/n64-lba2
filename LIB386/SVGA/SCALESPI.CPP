@@ -49,7 +49,30 @@ static S32 sprite_center_16_16(U8 delta) {
 // table. The pre-fix version ignored factorx/factory entirely, so every
 // opaque scaled sprite (e.g. the Pistolaser impact particles, magic-ball
 // sprite at scale 400 ≈ 1/6) rendered at full size.
+static void ScaleSpritePhys(S32 num, S32 x, S32 y, S32 factorx, S32 factory, void *ptrbank);
+
+// [renderscale] public entry: virtual coordinates / 16.16 factor relative to
+// the virtual resolution -> physical blit, then ScreenXMin.. back to virtual.
+static void RS_BoundsToVirtual(void) {
+#if RS_SHIFT
+    if (ScreenXMin != 32000) { // not the "nothing drawn" sentinel
+        ScreenXMin = RS_P2V(ScreenXMin);
+        ScreenYMin = RS_P2V(ScreenYMin);
+        ScreenXMax = RS_P2V(ScreenXMax);
+        ScreenYMax = RS_P2V(ScreenYMax);
+    }
+#endif
+}
+
 void ScaleSprite(S32 num, S32 x, S32 y, S32 factorx, S32 factory, void *ptrbank) {
+    S32 clip[4];
+    RS_PushPhysClip(clip);
+    ScaleSpritePhys(num, RS_V2P(x), RS_V2P(y), factorx >> RS_SHIFT, factory >> RS_SHIFT, ptrbank);
+    RS_PopClip(clip);
+    RS_BoundsToVirtual();
+}
+
+static void ScaleSpritePhys(S32 num, S32 x, S32 y, S32 factorx, S32 factory, void *ptrbank) {
     LIB386_TRACE_CPP("ScaleSprite", "1", "num=%d x=%d y=%d fx=%d fy=%d bank=%p", num, x, y, factorx, factory, (void *)ptrbank);
     if (factorx <= 0) {
         if (factorx == 0) {
@@ -109,7 +132,7 @@ void ScaleSprite(S32 num, S32 x, S32 y, S32 factorx, S32 factory, void *ptrbank)
 
         U8 *src = srcBase + start_y * sw + start_x;
         U8 *dst = (U8 *)Log + TabOffLine[sy] + sx;
-        S32 dst_line_offset = ModeDesiredX - (end_x - sx);
+        S32 dst_line_offset = TabOffLine[1] - (end_x - sx);
         S32 src_line_offset = sw - (end_x - sx);
         for (S32 yy = sy; yy < end_y; ++yy) {
             for (S32 xx = sx; xx < end_x; ++xx) {
@@ -238,7 +261,7 @@ void ScaleSprite(S32 num, S32 x, S32 y, S32 factorx, S32 factory, void *ptrbank)
             pendingRows = 0;
         }
 
-        dstPtr += ModeDesiredX;
+        dstPtr += TabOffLine[1];
     }
 }
 

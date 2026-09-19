@@ -894,7 +894,11 @@ void Line_Entry(S32 x0, S32 y0, S32 x1, S32 y1, S32 col) {
 
 void Line(S32 x0, S32 y0, S32 x1, S32 y1, S32 col) {
     LIB386_TRACE_CPP("Line", "1", "x0=%d y0=%d x1=%d y1=%d col=%d", x0, y0, x1, y1, col);
-    Line_Entry(x0, y0, x1, y1, col);
+    // [renderscale] virtual endpoints -> physical, physical clip
+    S32 clip[4];
+    RS_PushPhysClip(clip);
+    Line_Entry(RS_V2P(x0), RS_V2P(y0), RS_V2P(x1), RS_V2P(y1), col);
+    RS_PopClip(clip);
 }
 
 void Line_A(S32 x0, S32 y0, S32 x1, S32 y1, S32 col, S32 z1, S32 z2) {
@@ -904,15 +908,19 @@ void Line_A(S32 x0, S32 y0, S32 x1, S32 y1, S32 col, S32 z1, S32 z2) {
     if (g_polyrec_recording)
         polyrec_record_line_a(x0, y0, x1, y1, col, z1, z2);
 #endif
+    // [renderscale] virtual endpoints -> physical, physical clip
+    S32 clip[4];
+    RS_PushPhysClip(clip);
+    x0 = RS_V2P(x0);
+    y0 = RS_V2P(y0);
+    x1 = RS_V2P(x1);
+    y1 = RS_V2P(y1);
     if (Fill_Flag_NZW) {
         Line_ZBuffer_NZW(x0, y0, x1, y1, col, z1, z2);
-        return;
-    }
-
-    if (Fill_Flag_ZBuffer) {
+    } else if (Fill_Flag_ZBuffer) {
         Line_ZBuffer(x0, y0, x1, y1, col, z1, z2);
-        return;
+    } else {
+        Line_Entry(x0, y0, x1, y1, col);
     }
-
-    Line_Entry(x0, y0, x1, y1, col);
+    RS_PopClip(clip);
 }

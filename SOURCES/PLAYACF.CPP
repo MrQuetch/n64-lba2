@@ -61,7 +61,13 @@ void InitAcf(void) {
 
     GetMoviePath(PathAcf, ADELINE_MAX_PATH, VIDEO_HQR_NAME);
     if (!ExistsFileOrDir(PathAcf)) {
+#ifdef LBA2_TARGET_N64
+        // No FMV archive in the cartridge (223 MB does not fit a 64 MB ROM);
+        // playback is a no-op with USE_MVIDEO_NULL, so this must not be fatal.
+        LogPrintf("[acf] %s not in ROM - FMV disabled\n", PathAcf);
+#else
         TheEndCheckFile(PathAcf);
+#endif
     }
 
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, RESS_HQR_NAME);

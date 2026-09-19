@@ -6,6 +6,13 @@
 #include <utime.h>
 #include <unistd.h>
 
+#ifdef LBA2_TARGET_N64
+// libdragon's newlib ships <utime.h> without the POSIX prototype; the no-op
+// implementation lives in SYSTEM/N64_BACKEND.CPP.
+struct utimbuf;
+extern "C" int utime(const char *path, const struct utimbuf *times);
+#endif
+
 // -----------------------------------------------------------------------------
 #ifdef __cplusplus
 extern "C" {
@@ -96,18 +103,60 @@ U32 FileSize(const char *filename) {
     return (U32)((fsize == -1) ? 0 : fsize);
 }
 
+#ifdef LBA2_TARGET_N64
+// libdragon's rom:/ devoptab has patchy stat() support (directories and
+// trailing separators in particular). Probe with stat first, then fall back
+// to fopen (files) and dir_findfirst (directories, which also tolerates the
+// empty-dir -1 return).
+#include <SYSTEM/LIMITS.H> // ADELINE_MAX_PATH
+
+#include <dir.h>
+#include <stdio.h>
+#include <string.h>
+
+static bool N64DirExists(const char *path) {
+    char buf[ADELINE_MAX_PATH];
+    size_t n = strlen(path);
+    if (n == 0 || n >= sizeof(buf)) return false;
+    memcpy(buf, path, n + 1);
+    // Strip trailing separators, but keep the one of a bare "rom:/" root.
+    while (n > 1 && buf[n - 1] == '/' && buf[n - 2] != ':') buf[--n] = '\0';
+    dir_t d;
+    // Only a clean 0 counts: DFS error codes overlap with the "-1 = empty
+    // dir" convention and produced false positives (every probed path
+    // "existed", so discovery settled on the wrong resource dir). An empty
+    // dir cannot occur in a DFS image anyway.
+    return dir_findfirst(buf, &d) == 0;
+}
+#endif
+
 bool ExistsFileOrDir(const char *path) {
     assert(path != NULL);
 
     struct stat status = {};
-    return (stat(path, &status) == 0);
+    if (stat(path, &status) == 0) return true;
+#ifdef LBA2_TARGET_N64
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        fclose(f);
+        return true;
+    }
+    return N64DirExists(path);
+#else
+    return false;
+#endif
 }
 
 bool IsDirectory(const char *path) {
     assert(path != NULL);
 
     struct stat status = {};
-    return ((stat(path, &status) == 0) && ((status.st_mode & S_IFMT) == S_IFDIR));
+    if (stat(path, &status) == 0) return ((status.st_mode & S_IFMT) == S_IFDIR);
+#ifdef LBA2_TARGET_N64
+    return N64DirExists(path);
+#else
+    return false;
+#endif
 }
 
 // =============================================================================

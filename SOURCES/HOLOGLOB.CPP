@@ -989,9 +989,9 @@ void HoloGlobe(S32 planet) {
         MyGetInput();
 
         // Clear une bande du ZBuffer
-        memset((PtrZBuffer + TabOffLine[ZBufYMin]), // PtrZBuffer est un (U16 *)
+        memset((PtrZBuffer + TabOffLine[RS_V2P(ZBufYMin)]), // PtrZBuffer est un (U16 *)
                255,
-               (ZBufYMax - ZBufYMin + 1) * 640 * 2); // Clear ZBuffer
+               (RS_V2P(ZBufYMax) - RS_V2P(ZBufYMin) + 1) * PhysResX * 2); // Clear ZBuffer [renderscale]
 
         ClearZBufMinMax();
 

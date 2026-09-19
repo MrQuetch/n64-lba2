@@ -138,7 +138,20 @@ void MergeLists(T_BOX **boxlistdst, T_BOX *pboxsrc) {
     }
 }
 
+#ifdef LBA2_TARGET_WIIU
+extern "C" U32 N64ProfTicks(void);
+extern "C" void N64ProfAddBoxTicks(U32);
+struct N64ProfBoxScope { // RAII: time spent in the dirty-box Log->Phys copy
+    U32 t0;
+    N64ProfBoxScope() : t0(N64ProfTicks()) {}
+    ~N64ProfBoxScope() { N64ProfAddBoxTicks(N64ProfTicks() - t0); }
+};
+#endif
+
 void BltListAndEmpty(T_BOX **boxlist) {
+#ifdef LBA2_TARGET_WIIU
+    N64ProfBoxScope _boxScope;
+#endif
     // This method free the whole chain at once at the end because
     // we don't need new boxes during processing.
 
@@ -234,6 +247,10 @@ static void BoxClear() {
 }
 
 // --- Private macros ----------------------------------------------------------
+// [renderscale] the box lists live in PHYSICAL coordinates (they drive the
+// Log->Phys blits); CheckClip() is applied to physical rectangles. The public
+// Box*Add()/BoxCls() entry points convert from the virtual coordinates the
+// engine passes them (see SCREEN.H).
 #define CheckClip()               \
     x1++;                         \
     y1++;                         \
@@ -241,12 +258,18 @@ static void BoxClear() {
         x0 = 0;                   \
     if (y0 < 0)                   \
         y0 = 0;                   \
-    if (x1 > ModeDesiredX)        \
-        x1 = ModeDesiredX;        \
-    if (y1 > ModeDesiredY)        \
-        y1 = ModeDesiredY;        \
+    if (x1 > (S32)PhysResX)        \
+        x1 = (S32)PhysResX;        \
+    if (y1 > (S32)PhysResY)        \
+        y1 = (S32)PhysResY;        \
     if ((x1 <= x0) || (y1 <= y0)) \
     return
+
+#define V2P_BOX()    \
+    x0 = RS_V2P(x0); \
+    y0 = RS_V2P(y0); \
+    x1 = RS_V2P(x1); \
+    y1 = RS_V2P(y1)
 
 // --- Public interface --------------------------------------------------------
 void NewBox(T_BOX **boxlist, S32 x0, S32 y0, S32 x1, S32 y1) {
@@ -344,21 +367,28 @@ again:
     AddSortBox(boxlist, pbox, y0);
 }
 
+static void BoxStaticAddPhys(S32 x0, S32 y0, S32 x1, S32 y1) {
+    CheckClip();
+
+    NewBox(&pBoxStaticList, x0, y0, x1, y1);
+}
+
 void BoxMovingAdd(S32 x0, S32 y0, S32 x1, S32 y1) {
+    V2P_BOX();
     CheckClip();
 
     NewBox(&pBoxMovingList, x0, y0, x1, y1);
 }
 
 void BoxStaticAdd(S32 x0, S32 y0, S32 x1, S32 y1) {
-    CheckClip();
-
-    NewBox(&pBoxStaticList, x0, y0, x1, y1);
+    V2P_BOX();
+    BoxStaticAddPhys(x0, y0, x1, y1);
 }
 
 void BoxUnstaticAdd(S32 x0, S32 y0, S32 x1, S32 y1) {
     T_BOX box;
 
+    V2P_BOX();
     CheckClip();
 
     x0 &= BoxMask;
@@ -375,7 +405,7 @@ void BoxUnstaticAdd(S32 x0, S32 y0, S32 x1, S32 y1) {
     NewBox(&pBoxStaticList, x0, y0, x1, y1);
 }
 
-void BoxCls(S32 x0, S32 y0, S32 x1, S32 y1) {
+static void BoxClsPhys(S32 x0, S32 y0, S32 x1, S32 y1) {
     T_BOX box;
 
     CheckClip();
@@ -392,6 +422,16 @@ void BoxCls(S32 x0, S32 y0, S32 x1, S32 y1) {
     DefaultBoxOneClear(&box); // offscreen buffer clear
 
     NewBox(&pBoxStaticList, x0, y0, x1, y1);
+}
+
+void BoxCls(S32 x0, S32 y0, S32 x1, S32 y1) {
+    V2P_BOX();
+    BoxClsPhys(x0, y0, x1, y1);
+}
+
+// Cls() macro target: clear the whole (physical) box clip area.
+void BoxClsAll() {
+    BoxClsPhys(BoxClipXMin, BoxClipYMin, BoxClipXMax - 1, BoxClipYMax - 1);
 }
 
 void BoxReset() {
@@ -441,7 +481,7 @@ void BoxBlit() {
 
         GetBoxGraph(MouseSpriteGraphicNum, &x0, &y0, &x1, &y1, MouseSpriteGraphic);
 
-        sx = MouseX;
+        sx = MouseX; // virtual, like the sprite box
         sy = MouseY;
 
         x0 += sx;
@@ -454,10 +494,10 @@ void BoxBlit() {
         if (y0 < 0)
             y0 = 0;
 
-        if (x1 > ModeDesiredX)
-            x1 = ModeDesiredX;
-        if (y1 > ModeDesiredY)
-            y1 = ModeDesiredY;
+        if (x1 > (S32)ModeDesiredX)
+            x1 = (S32)ModeDesiredX;
+        if (y1 > (S32)ModeDesiredY)
+            y1 = (S32)ModeDesiredY;
 
         if ((x1 > x0) && (y1 > y0)) {
             // Save log under mouse
@@ -475,8 +515,8 @@ void BoxBlit() {
 
             AffGraph(MouseSpriteGraphicNum, sx, sy, MouseSpriteGraphic);
 
-            // add box in optlist for immediate blit
-            NewBox(&pBoxOptList, x0, y0, x1, y1);
+            // add box in optlist for immediate blit (physical)
+            NewBox(&pBoxOptList, RS_V2P(x0), RS_V2P(y0), RS_V2P(x1), RS_V2P(y1));
         }
     }
 
@@ -518,7 +558,7 @@ void BoxBlit() {
 
         // Add sprite to static list to get it
         // cleaned in phys at next blit
-        NewBox(&pBoxStaticList, x0, y0, x1, y1);
+        NewBox(&pBoxStaticList, RS_V2P(x0), RS_V2P(y0), RS_V2P(x1), RS_V2P(y1));
     }
 }
 
@@ -538,7 +578,7 @@ void BoxUpdate() {
 
 void BoxStaticFullflip() {
     BoxReset();
-    BoxStaticAdd(BoxClipXMin, BoxClipYMin, BoxClipXMax - 1, BoxClipYMax - 1);
+    BoxStaticAddPhys(BoxClipXMin, BoxClipYMin, BoxClipXMax - 1, BoxClipYMax - 1);
     BoxUpdate();
 }
 
@@ -550,10 +590,10 @@ void BoxChangeClip(S32 x0, S32 y0, S32 x1, S32 y1, S32 clean) {
         x0 = 0;
     if (y0 < 0)
         y0 = 0;
-    if (x1 > ModeDesiredX)
-        x1 = ModeDesiredX;
-    if (y1 > ModeDesiredY)
-        y1 = ModeDesiredY;
+    if (x1 > (S32)PhysResX)
+        x1 = (S32)PhysResX;
+    if (y1 > (S32)PhysResY)
+        y1 = (S32)PhysResY;
 
     if ((x1 <= x0) || (y1 <= y0))
         return;
@@ -593,7 +633,7 @@ S32 BoxInit(S32 nbBox) {
     SetBoxOneBlit(NULL);
     SetBoxOneClean(NULL);
 
-    BoxChangeClip(0, 0, ModeDesiredX - 1, ModeDesiredY - 1, TRUE);
+    BoxChangeClip(0, 0, PhysResX - 1, PhysResY - 1, TRUE);
 
     // Allocate chained list of boxes
     pBoxMalloc = (T_BOX *)Malloc(nbBox * sizeof(T_BOX));

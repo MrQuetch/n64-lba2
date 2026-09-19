@@ -78,6 +78,23 @@ T_DEF_KEY GamepadKeys[MAX_INPUT];
 // version is older than this.
 #define GAMEPAD_MAP_VERSION 3
 
+#ifdef LBA2_TARGET_N64
+// N64: every pad control injects a PC keyboard scancode directly into TabKeys
+// (SOURCES/JOYSTICK_N64.CPP). The K_GAMEPAD_* bits it also raises drive only
+// menu navigation / the on-screen keyboard / "press any key" skips — never
+// gameplay. Binding them here as well would double-fire actions (A would be
+// both K_GAMEPAD_A->I_ACTION_ALWAYS and injected SPACE->I_ACTION_M), and the
+// spell slots 32..35 are unreachable through this combined table regardless.
+// So keep it fully unbound: the injected keyboard is the single source of
+// truth. (ReadGamepadConfig discards the stale cfg Gamepad%d values because
+// GamepadMapVersion is absent, so these defaults are what actually load.)
+const T_DEF_KEY GamepadKeysDefault[MAX_INPUT] = {
+    {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
+    {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
+    {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
+    {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
+};
+#else
 const T_DEF_KEY GamepadKeysDefault[MAX_INPUT] = {
     // V2 (Wii U): walk fwd/back on the left stick (D-pad mirrors it in the
     // VPAD stub), triggers kept as secondary. The DC-inherited scheme had
@@ -126,6 +143,7 @@ const T_DEF_KEY GamepadKeysDefault[MAX_INPUT] = {
     {K_GAMEPAD_DPAD_UP, 0},                       // 34 I_PROTECTION
     {K_GAMEPAD_DPAD_LEFT, 0},                     // 35 I_FOUDRE
 };
+#endif // LBA2_TARGET_N64
 
 /*══════════════════════════════════════════════════════════════════════════*
 			██████┐ ██┐ ██┐ ██████┐ ██████┐

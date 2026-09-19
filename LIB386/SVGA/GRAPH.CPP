@@ -71,7 +71,111 @@ S32 GetDxDyGraph(U8 numgraph, S32 *x, S32 *y, const void *bankgraph) {
 
 S32 ClippingGraph(S32 x0, S32 y0, S32 x1, S32 y1, U8 *graphics);
 
+// [renderscale] Blit a bank whose graphics are already at the PHYSICAL
+// resolution, at PHYSICAL coordinates (the pre-halved brick bank, GRILLE.CPP).
+// ScreenXMin.. are reported in virtual coordinates like every other primitive.
+// On hosts where RS_SHIFT == 0 this is simply AffGraph.
+static S32 AffGraphPhys(S32 numgraph, S32 x, S32 y, const void *bankgraph);
+
+S32 AffGraphNative(S32 numgraph, S32 x, S32 y, const void *bankgraph) {
+    S32 clip[4];
+    RS_PushPhysClip(clip);
+    S32 r = AffGraphPhys(numgraph, x, y, bankgraph);
+    RS_PopClip(clip);
+    ScreenXMin = RS_P2V(ScreenXMin);
+    ScreenYMin = RS_P2V(ScreenYMin);
+    ScreenXMax = RS_P2V(ScreenXMax) + (RS_P2V(1) - 1);
+    ScreenYMax = RS_P2V(ScreenYMax) + (RS_P2V(1) - 1);
+    return r;
+}
+
+#if RS_SHIFT
+// Skip one RLE line without drawing it.
+static inline const U8 *SkipGraphLine(const U8 *g) {
+    U8 nbBlock = *g++;
+    for (U8 j = 0; j < nbBlock; j++) {
+        U8 control = *g++;
+        U8 opCode = control >> 6;
+        if (opCode == 1)
+            g += (control & 0x3F) + 1;
+        else if (opCode == 2)
+            g += 1;
+    }
+    return g;
+}
+
+// Decode one RLE line into dst (0 = transparent, like ClippingGraph).
+static inline const U8 *DecodeGraphLine(const U8 *g, U8 *dst) {
+    U8 nbBlock = *g++;
+    for (U8 j = 0; j < nbBlock; j++) {
+        U8 control = *g++;
+        U8 opCode = control >> 6;
+        U32 counter = (control & 0x3F) + 1;
+        if (opCode == 0) {
+            while (counter--) *dst++ = 0;
+        } else if (opCode == 1) {
+            while (counter--) *dst++ = *g++;
+        } else {
+            U8 color = *g++;
+            while (counter--) *dst++ = color;
+        }
+    }
+    return g;
+}
+
+// Virtual-coordinate, full-resolution bank -> physical screen at half scale
+// (even rows / even columns, nearest). Clip tests in virtual space first
+// (so ScreenXMin.. and the early-out match the original), then per pixel
+// against the physical rectangle.
 S32 AffGraph(S32 numgraph, S32 x, S32 y, const void *bankgraph) {
+    LIB386_TRACE_CPP("AffGraph", "1", "num=%d x=%d y=%d bank=%p", numgraph, x, y, (void *)bankgraph);
+    WIIU_FIX_BANK_TABLE(bankgraph);
+    const U8 *data = (const U8 *)bankgraph + ((const U32 *)bankgraph)[numgraph];
+    U8 deltaX = data[0];
+    U8 nbLine = data[1];
+    S8 hotX = (S8)data[2];
+    S8 hotY = (S8)data[3];
+    const U8 *graphics = data + 4;
+
+    S32 x0 = ScreenXMin = x + hotX;
+    S32 y0 = ScreenYMin = y + hotY;
+    S32 x1 = ScreenXMax = x0 + deltaX - 1;
+    S32 y1 = ScreenYMax = y0 + nbLine - 1;
+
+    if (x0 > ClipXMax || y0 > ClipYMax || x1 < ClipXMin || y1 < ClipYMin)
+        return 0;
+
+    const S32 pcx0 = RS_V2P(ClipXMin), pcy0 = RS_V2P(ClipYMin);
+    const S32 pcx1 = RS_V2P(ClipXMax), pcy1 = RS_V2P(ClipYMax);
+    const S32 jStart = (x0 & 1) ? 1 : 0; // first even virtual column
+
+    for (S32 i = 0; i < nbLine; i++) {
+        S32 vy = y0 + i;
+        S32 py = RS_V2P(vy);
+        if ((vy & 1) || py < pcy0 || py > pcy1) {
+            graphics = SkipGraphLine(graphics);
+            continue;
+        }
+        graphics = DecodeGraphLine(graphics, BufferClip);
+        U8 *row = (U8 *)Log + TabOffLine[py];
+        for (S32 j = jStart; j < deltaX; j += 2) {
+            S32 px = RS_V2P(x0 + j);
+            if (px < pcx0 || px > pcx1)
+                continue;
+            U8 v = BufferClip[j];
+            if (v)
+                row[px] = v;
+        }
+    }
+    return 0;
+}
+#else
+S32 AffGraph(S32 numgraph, S32 x, S32 y, const void *bankgraph) {
+    return AffGraphPhys(numgraph, x, y, bankgraph);
+}
+#endif
+
+static S32 AffGraphPhys(S32 numgraph, S32 x, S32 y, const void *bankgraph) {
     LIB386_TRACE_CPP("AffGraph", "1", "num=%d x=%d y=%d bank=%p", numgraph, x, y, (void *)bankgraph);
     WIIU_FIX_BANK_TABLE(bankgraph);
     U8 *data = (U8 *)bankgraph + ((U32 *)bankgraph)[numgraph];

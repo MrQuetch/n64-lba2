@@ -153,7 +153,28 @@ S32 Fill_Poly(S32 Type_Poly, S32 Color_Poly, S32 Nb_Points,
     Color_Poly = Color_Poly & 0xFF;
 
     Fill_Jump_Fn filler = Fill_Saut_Normal[Type_Poly];
+#if RS_SHIFT
+    // [renderscale] the caller projected in virtual (640x480) space: halve
+    // the screen coordinates on a private copy and fill against the physical
+    // clip rectangle. Everything else in Struc_Point (U/V, light, Z, W) is
+    // resolution independent.
+    static Struc_Point rsPoints[64];
+    if (Nb_Points <= 64) {
+        for (S32 i = 0; i < Nb_Points; i++) {
+            rsPoints[i] = Ptr_Points[i];
+            rsPoints[i].Pt_XE = (S16)RS_V2P(rsPoints[i].Pt_XE);
+            rsPoints[i].Pt_YE = (S16)RS_V2P(rsPoints[i].Pt_YE);
+        }
+        Ptr_Points = rsPoints;
+    }
+    S32 clip[4];
+    RS_PushPhysClip(clip);
+    S32 r = filler(Nb_Points, Ptr_Points, Color_Poly);
+    RS_PopClip(clip);
+    return r;
+#else
     return filler(Nb_Points, Ptr_Points, Color_Poly);
+#endif
 }
 
 void Switch_Normal(void) {

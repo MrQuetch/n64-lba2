@@ -1,0 +1,139 @@
+# LBA2 Nintendo 64 build (libdragon).
+# Run inside the n64lba-toolchain docker image:
+#   make -f Makefile.n64            (from this directory)
+# Source lists mirror the CMake ones (SOURCES/CMakeLists.txt + LIB386/*/CMakeLists.txt),
+# with the Wii U backend files swapped for N64 ones.
+
+BUILD_DIR = build-n64
+SOURCE_DIR = .
+
+include $(N64_INST)/include/n64.mk
+
+# The 1997 engine cannot survive -Werror; relax warnings like the Wii U build
+# (-Wno-narrowing -fpermissive) and pin C++14 (engine is C++98-era).
+N64_C_AND_CXX_FLAGS := $(filter-out -Werror -fdiagnostics-color=always,$(N64_C_AND_CXX_FLAGS)) \
+    -ffp-contract=off -Wno-unknown-pragmas -fdiagnostics-color=never
+N64_CXXFLAGS := $(filter-out -std=gnu++17,$(N64_CXXFLAGS)) -std=gnu++14 -fpermissive -Wno-narrowing
+
+# LBA2_TARGET_WIIU doubles as the "big-endian console port" switch: it enables
+# every endianness fix from the Wii U campaign (N64 is big-endian too).
+# LBA2_TARGET_N64 carves out the few genuinely WiiU-only paths.
+DEFINES = -DLBA2_TARGET_WIIU -DLBA2_TARGET_N64 \
+          -DONE_GAME_DIRECTORY -DLBA_GAME -DCDROM \
+          -DUSE_MVIDEO_NULL -DUSE_SOUND_N64
+
+INCLUDES = -I$(SOURCE_DIR)/LIB386/H -I$(SOURCE_DIR)/SOURCES \
+           -I$(SOURCE_DIR)/SOURCES/CONSOLE -I$(BUILD_DIR)/generated
+
+N64_CFLAGS   += $(DEFINES) $(INCLUDES)
+N64_CXXFLAGS += $(DEFINES) $(INCLUDES)
+
+# --- SOURCES/ (game core) ---
+SRC_GAME = AMBIANCE.CPP ANIMTEX.CPP BEZIER.CPP BUILD_INFO.CPP BUGGY.CPP CHEATCOD.CPP \
+    COMPORTE.CPP CONFIG.CPP CREDITS.CPP CREDITS_PARSE.CPP DART.CPP DIRECTORIES.CPP \
+    DISKFUNC.CPP EMBEDDED_CFG_WRITE.CPP EXTFUNC.CPP EXTRA.CPP FICHE.CPP FLOW.CPP \
+    GAMEMENU.CPP GAMEMENU_MOUSE.CPP GERELIFE.CPP GERETRAK.CPP GLOBAL.CPP GRILLE.CPP \
+    HOLOBODY.CPP HOLOGLOB.CPP HOLOPLAN.CPP IMPACT.CPP INCRUST.CPP INITADEL.C \
+    INPUT.CPP INTEXT.CPP INVENT.CPP LZSS.CPP MEM.CPP MESSAGE.CPP MUSIC.CPP \
+    OBJECT.CPP PATCH.CPP PERSO.CPP RES_DISCOVERY.CPP PLAYACF.CPP POF.CPP RAIN.CPP \
+    SAVEGAME.CPP SCAN.CPP SORT.CPP VALIDPOS.CPP VERSION.CPP WAGON.CPP ZV.CPP \
+    COMPRESS.CPP FIRE.CPP FLOW_A.CPP FUNC.CPP GRILLE_A.CPP PLASMA.CPP \
+    JOYSTICK_N64.CPP CONSOLE/CONSOLE_CMD.CPP CONSOLE/CONSOLE_WIIU_STUB.CPP
+
+# --- SOURCES/3DEXT ---
+SRC_3DEXT = DECORS.CPP GLOBEXT.CPP LBA_EXT.CPP LOADISLE.CPP MAPTOOLS.CPP TERRAIN.CPP \
+    BOXZBUF.CPP LINERAIN.CPP
+
+# --- LIB386/3D --- (sort dedups LIGHT.CPP, present in both CMake lists)
+SRC_3D = $(sort CAMERA.CPP DATAMAT.CPP DISTANCE.CPP IMATSTD.CPP LIGHT.CPP LIROT3D.CPP \
+    LPROJ.CPP LROT3D.CPP MOVE.CPP ROT3D.CPP \
+    COPYMATF.CPP GETANG2D.CPP GETANG3D.CPP IMATSTDF.CPP IMATTRAF.CPP LIROT3DF.CPP \
+    LITLISTF.CPP LPROJ3DF.CPP LPROJISO.CPP LROT2DF.CPP LROT3DF.CPP MULMATF.CPP \
+    PRLI3DF.CPP PRLIISO.CPP PROJ.CPP REGLE3.CPP ROTMATU.CPP ROTRALIF.CPP ROTVECT.CPP \
+    SINTAB.CPP SINTABF.CPP SQRROOT.CPP TANTAB.CPP)
+
+# --- LIB386/ANIM ---
+SRC_ANIM = ANIM.CPP BODY.CPP CLEAR.CPP FRAME.CPP INTANIM.CPP INTERDEP.CPP \
+    INTFRAME.CPP LIBINIT.CPP STOFRAME.CPP TEXTURE.CPP
+
+# --- LIB386/FILEIO ---
+SRC_FILEIO = PCX.CPP LOADPCX.CPP SAVEPCX.CPP SAVEPNG.CPP
+
+# --- LIB386/OBJECT ---
+SRC_OBJECT = AFF_OBJ.CPP
+
+# --- LIB386/pol_work --- (sort dedups POLYLINE/POLYTEXT duplicates)
+SRC_POLY = $(sort POLY.CPP POLY_JMP.CPP POLYCLIP.CPP POLYDISC.CPP POLYFLAT.CPP \
+    POLYGOUR.CPP POLYGTEX.CPP POLYLINE.CPP POLYTEXT.CPP POLYTEXZ.CPP POLYTZF.CPP \
+    POLYTZG.CPP TESTVUEF.CPP)
+
+# --- LIB386/SVGA --- (N64.CPP replaces WIIU.CPP/SDL.CPP; sort dedups CLIP/GRAPH)
+SRC_SVGA = $(sort CLIP.CPP DIRTYBOX.CPP GPRINTF.CPP GRAPH.CPP INITMODE.CPP PLOT.CPP \
+    RECT.CPP SCREEN.CPP SCREENXY.CPP N64.CPP \
+    AFFSTR.CPP BLITBOXF.CPP BOX.CPP CALCMASK.CPP CLRBOXF.CPP COPYMASK.CPP \
+    CPYBLOCI.CPP CPYBLOCK.CPP FONT.CPP MASK.CPP RESBLOCK.CPP SAVBLOCK.CPP \
+    SCALEBOX.CPP SCALESPI.CPP SCALESPT.CPP)
+
+# --- LIB386/SYSTEM --- (N64_BACKEND.CPP replaces WIIU_BACKEND.CPP)
+SRC_SYSTEM = CMDLINE.CPP DEFFILE.CPP EXIT.CPP FILECOPY.CPP FILENAME.CPP FILES.CPP \
+    HQFILE.CPP HQMEM.CPP HQRLOAD.CPP HQRMEM.CPP HQRMLOAD.CPP HQRRESS.CPP INPUT.CPP \
+    ITOA.CPP LOADMALL.CPP LOADSAVE.CPP N_MALLOC.CPP S_MALLOC.CPP SYSTEM.CPP \
+    UTILS.CPP N64_BACKEND.CPP \
+    CPU.CPP FASTCPYF.CPP LZ.CPP MOUSEDAT.CPP
+
+# --- LIB386/AIL (N64 sound backend: libdragon mixer + wav64 music) ---
+SRC_AIL = N64/SOUND_N64_BACKEND.CPP
+
+src = $(addprefix SOURCES/,$(SRC_GAME)) \
+      $(addprefix SOURCES/3DEXT/,$(SRC_3DEXT)) \
+      $(addprefix LIB386/3D/,$(SRC_3D)) \
+      $(addprefix LIB386/ANIM/,$(SRC_ANIM)) \
+      $(addprefix LIB386/FILEIO/,$(SRC_FILEIO)) \
+      $(addprefix LIB386/OBJECT/,$(SRC_OBJECT)) \
+      $(addprefix LIB386/pol_work/,$(SRC_POLY)) \
+      $(addprefix LIB386/SVGA/,$(SRC_SVGA)) \
+      $(addprefix LIB386/SYSTEM/,$(SRC_SYSTEM)) \
+      $(addprefix LIB386/AIL/,$(SRC_AIL))
+
+GENERATED = generated/embedded_lba2_cfg_data.cpp
+
+OBJS = $(patsubst %.CPP,$(BUILD_DIR)/%.o, \
+       $(patsubst %.C,$(BUILD_DIR)/%.o, \
+       $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(src)))) \
+       $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(addprefix $(BUILD_DIR)/,$(GENERATED)))
+
+all: lba2.z64
+
+# Uppercase-extension rules (engine files are .CPP/.C; n64.mk only covers lowercase)
+$(BUILD_DIR)/%.o: $(SOURCE_DIR)/%.CPP
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(CXX) -c $(CXXFLAGS) -o $@ $<
+
+$(BUILD_DIR)/%.o: $(SOURCE_DIR)/%.C
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(CXX) -c $(CXXFLAGS) -o $@ $<
+
+# Generated sources live under $(BUILD_DIR)/generated (see build-n64.sh)
+$(BUILD_DIR)/$(BUILD_DIR)/generated/%.o: $(BUILD_DIR)/generated/%.cpp
+	@mkdir -p $(dir $@)
+	@echo "    [CXX] $<"
+	$(CXX) -c $(CXXFLAGS) -o $@ $<
+
+$(BUILD_DIR)/lba2.elf: $(OBJS)
+
+# DFS filesystem: staged by build-n64.sh into build-n64/dfsroot/data
+N64_MKDFS_ROOT = $(BUILD_DIR)/dfsroot
+$(BUILD_DIR)/lba2.dfs: $(wildcard $(BUILD_DIR)/dfsroot/*)
+lba2.z64: $(BUILD_DIR)/lba2.dfs
+
+lba2.z64: N64_ROM_TITLE = "LBA2 Twinsen Odyssey"
+lba2.z64: N64_ROM_SAVETYPE = sram256k
+
+clean:
+	rm -rf $(BUILD_DIR) lba2.z64
+
+-include $(wildcard $(BUILD_DIR)/*.d) $(wildcard $(BUILD_DIR)/**/*.d)
+
+.PHONY: all clean

@@ -1,0 +1,17 @@
+# N64-LBA2 toolchain image: libdragon (trunk) prebuilt on top of the official
+# toolchain-only image. Build once:
+#   docker build -t n64lba-toolchain:latest -f docker/Dockerfile.n64 docker
+# (build-n64.sh does it automatically on first use)
+FROM ghcr.io/dragonminded/libdragon:latest
+
+RUN git clone --depth 1 https://github.com/DragonMinded/libdragon.git /tmp/libdragon-src \
+ && cd /tmp/libdragon-src \
+ && git rev-parse HEAD > /libdragon.commit \
+ && ./build.sh \
+ && cd / \
+ && rm -rf /tmp/libdragon-src
+
+# ffmpeg: decodes the GOG .ogg music to wav at asset-staging time, feeding
+# audioconv64 (which only eats wav) to produce RSP-decodable .wav64 files.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*

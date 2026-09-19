@@ -22,7 +22,27 @@
 #define LINE_RAIN_BOX_MIN (S32)0x7FFFFFFF
 #define LINE_RAIN_BOX_MAX (S32)0x80000000u
 
+static S32 LineRainPhys(S32 x0, S32 y0, S32 z0, S32 x1, S32 y1, S32 z1, S32 coul);
+
+// [renderscale] virtual endpoints -> physical line, physical clip;
+// ScreenXMin.. (the dirty box RAIN.CPP adds) back to virtual.
 S32 LineRain(S32 x0, S32 y0, S32 z0, S32 x1, S32 y1, S32 z1, S32 coul) {
+    S32 clip[4];
+    RS_PushPhysClip(clip);
+    S32 r = LineRainPhys(RS_V2P(x0), RS_V2P(y0), z0, RS_V2P(x1), RS_V2P(y1), z1, coul);
+    RS_PopClip(clip);
+#if RS_SHIFT
+    if (ScreenXMin != LINE_RAIN_BOX_MIN) {
+        ScreenXMin = RS_P2V(ScreenXMin);
+        ScreenYMin = RS_P2V(ScreenYMin);
+        ScreenXMax = RS_P2V(ScreenXMax);
+        ScreenYMax = RS_P2V(ScreenYMax);
+    }
+#endif
+    return r;
+}
+
+static S32 LineRainPhys(S32 x0, S32 y0, S32 z0, S32 x1, S32 y1, S32 z1, S32 coul) {
     int v1;              // eax@1
     int v2;              // ebx@1
     int v3;              // ecx@1

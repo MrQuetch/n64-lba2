@@ -27,7 +27,19 @@ typedef struct {
     U8 HotY;
 } Struc_Mask_Header;
 
+static void CopyMaskPhys(S32 nummask, S32 x, S32 y, U8 *bankmask, void *src);
+
+// [renderscale] Only caller is the brick pipeline (GRILLE.CPP), which works
+// in PHYSICAL coordinates on the pre-halved mask bank: swap in the physical
+// clip rectangle for the duration of the blit.
 void CopyMask(S32 nummask, S32 x, S32 y, U8 *bankmask, void *src) {
+    S32 clip[4];
+    RS_PushPhysClip(clip);
+    CopyMaskPhys(nummask, x, y, bankmask, src);
+    RS_PopClip(clip);
+}
+
+static void CopyMaskPhys(S32 nummask, S32 x, S32 y, U8 *bankmask, void *src) {
     LIB386_TRACE_CPP("CopyMask", "1", "num=%d x=%d y=%d bank=%p src=%p", nummask, x, y, (void *)bankmask, (void *)src);
     U32 screenWidth = TabOffLine[1];
 

@@ -8,6 +8,7 @@
 #include <SYSTEM/HQRRESS.H>
 
 #include <string.h>
+#include <stdio.h>
 
 //──────────────────────────────────────────────────────────────────────────
 typedef struct {
@@ -154,6 +155,19 @@ static inline void HQR_Del_Bloc(T_HQR_HEADER *header, S32 index) {
     header->FreeSize += delsize;
 }
 
+#ifdef LBA2_TARGET_N64
+// [hangprof] per-frame accounting of HQR blocs loaded from ROM (reset by the
+// frame profiler in N64_BACKEND.CPP).
+extern "C" U32 N64ProfNowMs(void);
+extern "C" {
+U32 g_hqrLoadCount = 0;
+U32 g_hqrLoadMs = 0;
+U32 g_hqrLoadBytes = 0;
+U32 g_hqrEvictCount = 0;
+char g_hqrLoadLast[96] = "";
+}
+#endif
+
 //──────────────────────────────────────────────────────────────────────────
 // retourne le pointeur mémoire de la fiche (index) demandée
 void *HQR_Get(T_HQR_HEADER *header, S32 index, S32 *outSize) {
@@ -162,6 +176,9 @@ void *HQR_Get(T_HQR_HEADER *header, S32 index, S32 *outSize) {
     void *ptr;
     T_HQR_BLOC *ptrbloc;
     S32 size;
+#ifdef LBA2_TARGET_N64
+    U32 _hqT0 = 0;
+#endif
 
     if (index < 0)
         goto error;
@@ -182,6 +199,9 @@ void *HQR_Get(T_HQR_HEADER *header, S32 index, S32 *outSize) {
     } else // need load
     {
         // load hqr bloc
+#ifdef LBA2_TARGET_N64
+        _hqT0 = N64ProfNowMs();
+#endif
         size = HQF_Init(header->Name, index);
         if (!size) {
             goto error;
@@ -215,6 +235,9 @@ void *HQR_Get(T_HQR_HEADER *header, S32 index, S32 *outSize) {
                 HQRGetDelFunc(header->Name, index);
 
             HQR_Del_Bloc(header, oldest);
+#ifdef LBA2_TARGET_N64
+            g_hqrEvictCount++;
+#endif
         }
 
         // compute ptr
@@ -235,6 +258,17 @@ void *HQR_Get(T_HQR_HEADER *header, S32 index, S32 *outSize) {
         header->FreeSize -= size;
 
         HQR_Flag = TRUE; // NEWLY LOADED
+#ifdef LBA2_TARGET_N64
+        g_hqrLoadCount++;
+        g_hqrLoadBytes += (U32)size;
+        g_hqrLoadMs += N64ProfNowMs() - _hqT0;
+        {
+            const char *nm = header->Name;
+            for (const char *p = header->Name; *p; p++)
+                if (*p == '/' || *p == '\\') nm = p + 1;
+            snprintf(g_hqrLoadLast, sizeof(g_hqrLoadLast), "%s#%ld(%ldB)", nm, (long)index, (long)size);
+        }
+#endif
 
         if (outSize != NULL) {
             *outSize = size;
