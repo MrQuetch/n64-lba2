@@ -490,7 +490,11 @@ U32 PlaySample(void *buffer, S32 sizeBytes, U32 userhandle, S32 pitchbend,
 
     v->active = 1;
     v->userhandle = userhandle & 0xFFFFu;
-    v->handle = (v->userhandle << 16) | ((s_handleCounter++ & 0xFFu) << 8) | (U32)slot;
+    // Canonical AIL handle layout (MILES/SDL/WIIU): [counter:8][userhandle:16]
+    // [slot:8], counter >= 1 so a full handle is always >= 0x1000000 and can
+    // be told apart from a bare sample number (see FindVoice).
+    if ((s_handleCounter & 0xFFu) == 0) s_handleCounter++;
+    v->handle = ((s_handleCounter++ & 0xFFu) << 24) | (v->userhandle << 8) | (U32)slot;
     v->startTimer = TimerSystemHR ? TimerSystemHR : 1;
     v->lenSamples = nSamples;
     v->bits = 16; // always widened to 16-bit (see buffer conversion above)
@@ -530,7 +534,19 @@ U32 PlaySample(void *buffer, S32 sizeBytes, U32 userhandle, S32 pitchbend,
     return v->handle;
 }
 
+// The engine addresses voices two ways: with the full handle PlaySample
+// returned (>= 0x1000000), or with the bare sample number it passed as
+// userhandle (AMBIANCE.CPP: IsSamplePlaying(SAMPLE_RAIN), StopOneSample(
+// SAMPLE_RAIN), HQ_ChangePanSample...). Resolving only full handles made every
+// number-based query a no-op: the rain loop could never be stopped once the
+// storm ended, SAMPLE_TIME_REPEAT never throttled, SampleAlways loops stacked.
 static int FindVoice(U32 sample) {
+    if (sample < 0x1000000u) {
+        for (int i = 0; i < NUM_VOICES; i++)
+            if (s_voices[i].active && s_voices[i].userhandle == sample)
+                return i;
+        return -1;
+    }
     int slot = (int)(sample & 0xFFu);
     if (slot >= 0 && slot < NUM_VOICES && s_voices[slot].active &&
         s_voices[slot].handle == sample)

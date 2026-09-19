@@ -54,32 +54,54 @@ def repack(voxpath, wavdir, voxoutdir):
     blob = bytearray()
     pos = header_size
     n_clips = 0
-    for i, o in enumerate(offs):
+    def read_entry(o):
+        # -> (payload, end_offset) or None
         if o == 0 or o + 10 > len(data):
-            continue
+            return None
         size, sizelzss, method = struct.unpack('<IIH', data[o:o + 10])
         if size <= 0 or size > 4_000_000:
-            continue
+            return None
         p = o + 10
         if method == 0:
             if p + size > len(data):
-                continue
-            payload = bytearray(data[p:p + size])
-        else:
-            if p + sizelzss > len(data):
-                continue
-            payload = bytearray(expand_lz(data[p:p + sizelzss], size))
-        flagnext = payload[0]
-        payload[0] = 0x52  # 'R' -> valid RIFF for ffmpeg
-        base = f"{stem}_{i:04d}"
-        open(os.path.join(wavdir, base + ".wav"), 'wb').write(payload)
-        # placeholder entry: [flagnext][basename\0]
-        ph = bytes([flagnext]) + base.encode('ascii') + b'\0'
-        new_offsets[i] = pos
-        entry = struct.pack('<IIH', len(ph), len(ph), 0) + ph
-        blob += entry
-        pos += len(entry)
-        n_clips += 1
+                return None
+            return bytearray(data[p:p + size]), p + size
+        if p + sizelzss > len(data):
+            return None
+        return bytearray(expand_lz(data[p:p + sizelzss], size)), p + sizelzss
+
+    for i, o in enumerate(offs):
+        ent = read_entry(o)
+        if ent is None:
+            continue
+        # Multi-part lines: when byte 0 (FlagNextVoc) is set, the continuation
+        # clip sits physically right after this entry WITHOUT an index slot of
+        # its own (MESSAGE.CPP::TestSpk just calls PlaySpeakVoc(fd) again at
+        # the current file position). Follow the chain and emit each part as
+        # its own placeholder, contiguous and unindexed, so chaining keeps
+        # working. Iterating slots only used to drop the tail: those 20 lines
+        # cut off halfway and then chained into whatever entry came next.
+        part = 0
+        while ent is not None:
+            payload, end = ent
+            flagnext = payload[0]
+            payload[0] = 0x52  # 'R' -> valid RIFF for ffmpeg
+            base = f"{stem}_{i:04d}" if part == 0 else f"{stem}_{i:04d}_{part}"
+            open(os.path.join(wavdir, base + ".wav"), 'wb').write(payload)
+            # placeholder entry: [flagnext][basename\0]
+            ph = bytes([flagnext]) + base.encode('ascii') + b'\0'
+            if part == 0:
+                new_offsets[i] = pos
+            entry = struct.pack('<IIH', len(ph), len(ph), 0) + ph
+            blob += entry
+            pos += len(entry)
+            n_clips += 1
+            if not flagnext:
+                break
+            part += 1
+            ent = read_entry(end)
+            if ent is None:
+                print(f"  WARNING {stem} entry {i}: FlagNextVoc set, no continuation at {end}")
 
     # offsets[0] must stay the header size (== entry 0 position) for MaxVoice.
     new_offsets[0] = header_size

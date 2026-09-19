@@ -67,6 +67,19 @@ Expansion Pak.
   them fixed both the silent main-menu theme and the silent Citadel
   exteriors. `ResumeMusic` no longer stops the stream before resuming it
   (on PC "CD" and "jingle" were two players; here they are one).
+- Two playtester reports. *Rain kept falling after the storm*: the engine
+  addresses voices either by the handle `PlaySample` returned or by the
+  bare sample number (`IsSamplePlaying(SAMPLE_RAIN)`, `StopOneSample(
+  SAMPLE_RAIN)`); the N64 lookup only resolved full handles, so every
+  number-based query was a no-op — the rain loop could not be stopped, the
+  `SAMPLE_TIME_REPEAT` throttle never fired, `SampleAlways` loops stacked.
+  Handles now use the MILES layout (`counter<<24 | user<<8 | slot`) and
+  numbers resolve by user handle. *Lines cut off mid-sentence*: 20 long
+  lines are split across `FlagNextVoc` chains whose continuation clips sit
+  physically after the first part with **no index slot**; `vox_repack.py`
+  iterated slots and dropped them, so the engine chained into whatever
+  entry came next. The repack now follows the chain (1261 clips, up to 5
+  parts per line).
 
 ## Input
 

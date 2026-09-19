@@ -152,7 +152,7 @@ if [ -d "$GAMEDATA" ]; then
     # French/German config just finds no wav64 and stays silent. Opus @12 kHz mono
     # fits ~132 min of speech in ~16 MB. Whole step is cached behind a sentinel
     # since the retail VOX never change.
-    VOX_FMT="opus-12000-en-v1"
+    VOX_FMT="opus-12000-en-v2"  # v2: FlagNextVoc continuation parts
     VOX_FMT_FILE="build-n64/.vox_fmt"
     if [ -d "$GAMEDATA"/vox ] && command -v ffmpeg >/dev/null 2>&1; then
         if [ "$(cat "$VOX_FMT_FILE" 2>/dev/null)" != "$VOX_FMT" ] || [ ! -d "$DFSROOT/vox" ]; then
