@@ -37,6 +37,54 @@ extern S32 FlagInfos;
 //****************************************************************************
 //****************************************************************************
 
+#ifdef LBA2_TARGET_N64
+// [terrainlod] The 8 cubes around the current one (DrawHorizon2ZBuf) are the
+// landscape on the horizon: small on screen, but each is a 64x64 grid of
+// two-pass triangles (flat/gouraud underlay + textured pass on top). With
+// "TerrainLod: 1" in LBA2.CFG the far cubes skip the textured pass: an
+// incrusted texture over an existing underlay is simply dropped, an opaque
+// one is replaced by a flat fill in its palette bank, lit like the engine's
+// own PolyFlag==1 case (a playtester's idea; the current cube keeps full
+// detail). Measured on the scene-entry redraw it buys nothing: the horizon's
+// polygon pass is ~40 ms of an ~850 ms full redraw either way, because the
+// cost is per-triangle setup and cache misses, not texturing — so it stays
+// an experiment, default off. See [terrprof] / "DebugFullRedraw".
+U8 N64TerrainLod = 0;
+static U8 s_terrainFar = 0; // set while the neighbour cubes are drawn
+// [renderprof] counters: [0] current cube, [1] neighbours
+U32 g_profHorizTicks = 0;
+U32 g_profTerrPolys[2] = {0, 0}, g_profTerrDrawn[2] = {0, 0}, g_profTerrTexSkipped = 0;
+U32 g_profTerrVtxTicks[2] = {0, 0}, g_profTerrPolyTicks[2] = {0, 0}; // per phase, [0]=cur [1]=far
+extern "C" U32 N64ProfTicks(void);
+
+static inline S32 N64TerrainUnderlayFill(S32 type, S32 color, Struc_Point *pts) {
+    S32 r = Fill_Poly(type, color, 3, pts);
+    g_profTerrPolys[s_terrainFar]++;
+    if (r) g_profTerrDrawn[s_terrainFar]++;
+    return r;
+}
+
+static inline S32 N64TerrainTextureFill(const T_HALF_POLY *ptrh, S32 type, S32 color,
+                                        Struc_Point *pts) {
+    if (s_terrainFar AND N64TerrainLod) {
+        g_profTerrTexSkipped++;
+        if (ptrh->PolyFlag) return 0; // underlay already on screen
+        S32 c = (ptrh->Bank << 4) + 11
+                + (((pts[0].Pt_Light + pts[1].Pt_Light + pts[2].Pt_Light) * 21845) >> 24);
+        return N64TerrainUnderlayFill(POLY_SOLID, c, pts);
+    }
+    S32 r = Fill_Poly(type, color, 3, pts);
+    g_profTerrPolys[s_terrainFar]++;
+    if (r) g_profTerrDrawn[s_terrainFar]++;
+    return r;
+}
+#define TERRAIN_UNDERLAY_FILL(type, color, pts) N64TerrainUnderlayFill(type, color, pts)
+#define TERRAIN_TEXTURE_FILL(ptrh, type, color, pts) N64TerrainTextureFill(ptrh, type, color, pts)
+#else
+#define TERRAIN_UNDERLAY_FILL(type, color, pts) Fill_Poly(type, color, 3, pts)
+#define TERRAIN_TEXTURE_FILL(ptrh, type, color, pts) Fill_Poly(type, color, 3, pts)
+#endif
+
 S32 ListTypePolygone[4] = {0, POLY_SOLID, POLY_GOURAUD_TABLE, POLY_DITHER_TABLE};
 S32 ListTypePTexture[] = {
     0,
@@ -183,9 +231,7 @@ if (ptrh->Sens == 0) {
                     color += ((i0 + i1 + i2) * 21845) >> 24; // *21845 >> 16 EQU / 3
                 }
 
-                Fill_Poly(ListTypePolygone[ptrh->PolyFlag],
-                          color, 3,
-                          Tab_Points);
+                TERRAIN_UNDERLAY_FILL(ListTypePolygone[ptrh->PolyFlag], color, Tab_Points);
             }
 
             if (ptrh->TexFlag) {
@@ -206,7 +252,7 @@ if (ptrh->Sens == 0) {
 
                 type = (U8)ListTypePTexture[ptrh->TexFlag + (ptrh->PolyFlag << 2)];
 
-                if (Fill_Poly(type, color, 3, Tab_Points)) {
+                if (TERRAIN_TEXTURE_FILL(ptrh, type, color, Tab_Points)) {
                     if (MaxPolySea AND(ptrh->CodeJeu & 12) == 12) { // hihi je suis un polygone animé...
 
                         if (NbAniPoly < MaxPolySea - 1) {
@@ -267,9 +313,7 @@ if (ptrh->Sens == 0) {
                 if (ptrh->PolyFlag == 1) {
                     color += ((i0 + i2 + i3) * 21845) >> 24; // *21845 >> 16 EQU / 3
                 }
-                Fill_Poly(ListTypePolygone[ptrh->PolyFlag],
-                          color, 3,
-                          Tab_Points);
+                TERRAIN_UNDERLAY_FILL(ListTypePolygone[ptrh->PolyFlag], color, Tab_Points);
             }
 
             if (ptrh->TexFlag) {
@@ -290,7 +334,7 @@ if (ptrh->Sens == 0) {
 
                 type = (U8)ListTypePTexture[ptrh->TexFlag + (ptrh->PolyFlag << 2)];
 
-                if (Fill_Poly(type, color, 3, Tab_Points)) {
+                if (TERRAIN_TEXTURE_FILL(ptrh, type, color, Tab_Points)) {
                     if (MaxPolySea AND(ptrh->CodeJeu & 12) == 12) { // hihi je suis un polygone animé...
                         if (NbAniPoly < MaxPolySea - 1) {
                             PtrAniPoly->X0 = (S16)Min3(x0, x2, x3);
@@ -350,9 +394,7 @@ if (ptrh->Sens == 0) {
                 if (ptrh->PolyFlag == 1) {
                     color += ((i0 + i1 + i3) * 21845) >> 24; // *21845 >> 16 EQU / 3
                 }
-                Fill_Poly(ListTypePolygone[ptrh->PolyFlag],
-                          color, 3,
-                          Tab_Points);
+                TERRAIN_UNDERLAY_FILL(ListTypePolygone[ptrh->PolyFlag], color, Tab_Points);
             }
 
             if (ptrh->TexFlag) {
@@ -373,7 +415,7 @@ if (ptrh->Sens == 0) {
 
                 type = (U8)ListTypePTexture[ptrh->TexFlag + (ptrh->PolyFlag << 2)];
 
-                if (Fill_Poly(type, color, 3, Tab_Points)) {
+                if (TERRAIN_TEXTURE_FILL(ptrh, type, color, Tab_Points)) {
                     if (MaxPolySea AND(ptrh->CodeJeu & 12) == 12) { // hihi je suis un polygone animé...
                         if (NbAniPoly < MaxPolySea - 1) {
                             PtrAniPoly->X0 = (S16)Min3(x0, x1, x3);
@@ -434,9 +476,7 @@ if (ptrh->Sens == 0) {
                     color += ((i1 + i2 + i3) * 21845) >> 24; // *21845 >> 16 EQU / 3
                 }
 
-                Fill_Poly(ListTypePolygone[ptrh->PolyFlag],
-                          color, 3,
-                          Tab_Points);
+                TERRAIN_UNDERLAY_FILL(ListTypePolygone[ptrh->PolyFlag], color, Tab_Points);
             }
 
             if (ptrh->TexFlag) {
@@ -457,7 +497,7 @@ if (ptrh->Sens == 0) {
 
                 type = (U8)ListTypePTexture[ptrh->TexFlag + (ptrh->PolyFlag << 2)];
 
-                if (Fill_Poly(type, color, 3, Tab_Points)) {
+                if (TERRAIN_TEXTURE_FILL(ptrh, type, color, Tab_Points)) {
                     if (MaxPolySea AND(ptrh->CodeJeu & 12) == 12) { // hihi je suis un polygone animé...
                         if (NbAniPoly < MaxPolySea - 1) {
                             PtrAniPoly->X0 = (S16)Min3(x1, x2, x3);
@@ -687,6 +727,10 @@ void DrawHorizon2ZBuf() {
     S32 cx = CameraX;
     S32 cy = CameraY;
     S32 cz = CameraZ;
+#ifdef LBA2_TARGET_N64
+    U32 _pt = N64ProfTicks();
+    s_terrainFar = 1;
+#endif
 
     if (BetaCam >= 0 AND BetaCam < 1024) {
         TerrainTri = TerrSO;
@@ -746,6 +790,10 @@ void DrawHorizon2ZBuf() {
     }
 
     SetPosCamera(cx, cy, cz);
+#ifdef LBA2_TARGET_N64
+    s_terrainFar = 0;
+    g_profHorizTicks += N64ProfTicks() - _pt;
+#endif
 
     if (flag) {
         if (!LoadCube(CurrentCubeX, CurrentCubeY)) {
@@ -792,6 +840,9 @@ void AffichageTerrainZBuf(void) {
     // affichage des objets du decors
     AffichageObjetDecorsZBuf();
 
+#ifdef LBA2_TARGET_N64
+    U32 _pt = N64ProfTicks();
+#endif
     // calcul les coordonnées 2D de chaque points
     ptra = &SommetAffichable[0][0];
     ptrm = MapSommetY;
@@ -844,6 +895,13 @@ void AffichageTerrainZBuf(void) {
 
     PtrMap = GroundTexture;
     RepMask = 0xFFFF;
+#ifdef LBA2_TARGET_N64
+    {
+        U32 _now = N64ProfTicks();
+        g_profTerrVtxTicks[s_terrainFar] += _now - _pt;
+        _pt = _now;
+    }
+#endif
 
     ptra = &SommetAffichable[0][0];
     ptrs = &SommetRot[0][0];
@@ -876,6 +934,9 @@ void AffichageTerrainZBuf(void) {
     }
 
     DrawOneSea(Y_SEA);
+#ifdef LBA2_TARGET_N64
+    g_profTerrPolyTicks[s_terrainFar] += N64ProfTicks() - _pt;
+#endif
 
 #ifdef LBA_EDITOR
     if (FlagInfos & INFO_DECORS) {

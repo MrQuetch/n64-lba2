@@ -103,6 +103,10 @@ is ~2.2 MB and the HQR caches, framebuffers and Z-buffer take another 5 MB.
   the emulator's `lba2.ram` to pick up a changed default. `DebugSaveTest: 1`
   (or `2` to fill the SRAM) runs an input-free self-test of the save path
   once the first cube is up and logs the result (`[sramtest]`).
+  `DebugFullRedraw: 1` redraws the whole exterior every frame (the cost of a
+  camera jump, measurable without input; expect ~1 fps), `TerrainLod: 1`
+  draws the horizon cubes flat instead of textured (an experiment: no
+  measurable gain, see the devlog); `[terrprof]` splits the terrain time.
 - **CRT safe area:** the picture is scaled by the VI into a window 6 % smaller
   on each side, so consumer CRTs (which overscan by 4–8 %) show the whole
   dialogue text; emulators and upscalers see a thin black border instead.
@@ -115,11 +119,15 @@ is ~2.2 MB and the HQR caches, framebuffers and Z-buffer take another 5 MB.
 - **Save slots.** 32 KB of SRAM hold about six saves plus the resume file; the
   game tells you when it is full. (768 Kbit SRAM would triple that but is
   not supported by every flashcart.)
-- **Exterior stalls.** Entering a new exterior area costs 2–3 frames of
-  ~1 s each: the first full render of the 9 surrounding terrain cubes and
-  their ~100 decor objects. Earlier versions stalled for 6–7 s because the
-  HQR caches were too small to hold the 9 cubes and re-streamed them from
-  ROM every frame; that part is fixed.
+- **Exterior stalls.** Every camera jump outdoors (re-centring on Twinsen,
+  entering an area) is a full redraw of the terrain, the 8 horizon cubes and
+  their ~100 decor objects: ~0.85 s in Ares (less on hardware). Normal
+  frames only redraw the objects, which is why the frame rate between jumps
+  is fine. Earlier versions stalled for 6–7 s because the HQR caches were
+  too small to hold the 9 cubes and re-streamed them from ROM every frame;
+  that part is fixed. The remaining cost is per-triangle setup and cache
+  misses in the software fillers (the current cube alone is ~2400 tiny
+  triangles at ~100 µs each), not texturing — see the devlog.
 - **Frame rate.** Exteriors are 20–30 fps; the rasterizer is fill-bound and
   the terrain is still drawn every full-refresh frame.
 - **Audio hitches** follow the frame rate: the mixer is pumped once per

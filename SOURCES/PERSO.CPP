@@ -31,6 +31,10 @@ static S32 N64DebugStartCube = -1;
 // saves, read the slot back) and log the outcome. Emulator-side self-test
 // for the cartridge filesystem; 0 = off.
 static S32 N64DebugSaveTest = 0;
+// "DebugFullRedraw: 1": redraw the whole exterior (terrain + horizon) every
+// frame, as if the camera never stopped moving — steady-state cost of a
+// walking frame measurable from a DebugStartCube boot with no input.
+static S32 N64DebugFullRedraw = 0;
 
 static void N64RunDebugSaveTest(void) {
     static S32 done = FALSE;
@@ -2210,6 +2214,10 @@ restartloop:
         }
 
         WIIU_FIRST_FMT(wiiu_first_iter_done, "[trace] MainLoop: AffScene(%d) enter\n", FirstTime);
+#ifdef LBA2_TARGET_N64
+        if (N64DebugFullRedraw AND CubeMode == CUBE_EXTERIEUR AND FirstTime == AFF_OBJETS_FLIP)
+            FirstTime = AFF_ALL_FLIP;
+#endif
 #ifdef LBA2_TARGET_WIIU
         const OSTime wiiuProfAffBegin = OSGetSystemTime();
 #endif
@@ -2308,6 +2316,11 @@ void ReadConfigFile(void) {
     N64SetScreenMargin(DefFileBufferReadValueDefault("ScreenMargin", 6));
     N64DebugStartCube = DefFileBufferReadValueDefault("DebugStartCube", -1);
     N64DebugSaveTest = DefFileBufferReadValueDefault("DebugSaveTest", 0);
+    N64DebugFullRedraw = DefFileBufferReadValueDefault("DebugFullRedraw", 0);
+    {
+        extern U8 N64TerrainLod; // 3DEXT/TERRAIN.CPP
+        N64TerrainLod = (U8)DefFileBufferReadValueDefault("TerrainLod", 0);
+    }
 #endif
 
     Version_US = DefFileBufferReadValue("Version_US");

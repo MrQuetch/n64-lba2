@@ -205,6 +205,38 @@ the menu font. An input-free self-test (`DebugSaveTest` in the cfg) saves,
 lists, reads back and fills the SRAM from a `DebugStartCube` boot, which
 is how the layer was verified in Ares before the ROM went to the tester.
 
+## Anatomy of an outdoor camera jump
+
+The playtester suggested drawing the terrain cubes Twinsen is not standing
+on with flat polygons instead of textured ones, to speed up exteriors.
+Measuring it first taught us how the exterior actually renders. With the
+classic camera (the default; `FollowCamera` is off) the terrain is not
+redrawn every frame at all: `AffScene` only refreshes the grid when the
+camera jumps — re-centring on Twinsen, entering an area — and the frames in
+between draw the objects only. So the "exterior frame rate" is really two
+numbers: 20–30 fps between jumps, and one ~850 ms frame (Ares) at every
+jump. That single frame is the stall the tester feels.
+
+To see inside it without a controller, `DebugFullRedraw: 1` forces the full
+redraw every frame from a `DebugStartCube` boot, and a `[terrprof]` line
+splits the terrain: the current cube spends ~35 ms projecting its 65×65
+vertices and ~250 ms filling ~2400 triangles — around 100 µs per triangle,
+for triangles that cover ~30 pixels at 320×240. That is not fill: it is the
+per-scanline perspective setup (divisions, `lrintl` calls, a W queue) and
+the 8 KB data cache missing on texture, Z-buffer and fog CLUT for nearly
+every pixel — the fillers were written for wide 640×480 spans on a CPU with
+a 256 KB L2. The 8 horizon cubes cost ~180 ms, of which ~83 ms is vertex
+projection and only ~41 ms the polygon pass; decor objects add ~150 ms.
+
+The flat-horizon idea is in the tree as `TerrainLod` (the terrain already
+draws a flat underlay under an incrusted texture, so "flat" means skipping
+the texture pass and filling opaque triangles in their palette bank) but
+stays off: the horizon's polygon pass is 40 ms with or without textures,
+because the cost is per triangle, not per texel. The levers that would
+matter are fewer and bigger triangles for the far cubes (a 33×33 grid
+would take ~60 ms off the vertex phase alone), a cheaper span setup in the
+fillers for small triangles, and the decor objects.
+
 ## Diagnostics kept in the tree
 
 - `[renderprof]`/`[affprof]`: per-60-frame breakdown (terrain, object fill,
@@ -212,6 +244,10 @@ is how the layer was verified in Ares before the ROM went to the tester.
 - `[hangprof]`: any frame ≥80 ms with its phase split, HQR loads/evictions,
   `LoadCube` count/time and unaligned-access exceptions; `ChangeCube`
   timing; heap snapshot after each cube.
+- `[terrprof]`: terrain split per frame — current cube vs the 8 horizon
+  cubes, vertex projection vs polygon fill, triangles submitted/drawn,
+  textures skipped by `TerrainLod`. `DebugFullRedraw` in the cfg makes
+  every frame a full redraw so the numbers can be read without input.
 - `[scenechg]`: a checksum net around the cube-change zones for a rare
   heisenbug (Twinsen landing on a wall coming back from the cellar: the
   zone's `Info3` read as 2048 instead of 0). It distinguishes an emulator

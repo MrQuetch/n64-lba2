@@ -237,6 +237,24 @@ void N64_BlitGameFramebuffer(const void *phys, U32 resX, U32 resY,
         LogPrintf("[affprof]    cls=%uus refresh=%uus copy=%uus objects=%uus [fill=%uus prepass=%uus]\n",
                   (unsigned)clsUs, (unsigned)refUs, (unsigned)cpyUs, (unsigned)objUs,
                   (unsigned)sortUs, (unsigned)prepassUs);
+        {
+            // [terrainlod] neighbour cubes (DrawHorizon2ZBuf, inside refresh) vs
+            // current cube (terr): time, polygons submitted/drawn, textures skipped.
+            extern U32 g_profHorizTicks, g_profTerrPolys[2], g_profTerrDrawn[2], g_profTerrTexSkipped;
+            extern U32 g_profTerrVtxTicks[2], g_profTerrPolyTicks[2];
+#define TP_US(accum) ((unsigned)((U64)((accum) / f) * 1000000ULL / TICKS_PER_SECOND))
+            if (g_profHorizTicks OR g_profTerrPolys[0])
+                LogPrintf("[terrprof]   cur: vtx=%uus poly=%uus %lu/%lu polys | far: total=%uus vtx=%uus poly=%uus %lu/%lu polys texskip=%lu (per frame)\n",
+                          TP_US(g_profTerrVtxTicks[0]), TP_US(g_profTerrPolyTicks[0]),
+                          (unsigned long)(g_profTerrDrawn[0] / f), (unsigned long)(g_profTerrPolys[0] / f),
+                          TP_US(g_profHorizTicks), TP_US(g_profTerrVtxTicks[1]), TP_US(g_profTerrPolyTicks[1]),
+                          (unsigned long)(g_profTerrDrawn[1] / f), (unsigned long)(g_profTerrPolys[1] / f),
+                          (unsigned long)(g_profTerrTexSkipped / f));
+#undef TP_US
+            g_profHorizTicks = g_profTerrPolys[0] = g_profTerrPolys[1] = 0;
+            g_profTerrDrawn[0] = g_profTerrDrawn[1] = g_profTerrTexSkipped = 0;
+            g_profTerrVtxTicks[0] = g_profTerrVtxTicks[1] = g_profTerrPolyTicks[0] = g_profTerrPolyTicks[1] = 0;
+        }
         s_rpWb = s_rpPresent = s_rpTerrain = s_rpFrame = s_rpFrames = s_rpAff = s_rpBox = 0;
         s_rpCls = s_rpRefresh = s_rpCopy = s_rpSort = 0;
     }
