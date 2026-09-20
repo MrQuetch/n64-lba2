@@ -184,6 +184,19 @@ typedef	struct	{
 #define	SAVE_COMPRESS		0x80
 #define	MASK_NUM_VERSION	~(SAVE_COMPRESS)
 
+// Thumbnail stored in every save file. The PC format keeps a 160x120 image;
+// the N64 build shows it at 80x60 physical pixels (320x240 output) and stores
+// exactly that, 14.4 KB less per save in the 32 KB cartridge SRAM. N64 saves
+// are therefore not byte-compatible with PC ones (they never leave the cart).
+#ifdef LBA2_TARGET_N64
+#define SAVE_THUMB_W 80
+#define SAVE_THUMB_H 60
+#else
+#define SAVE_THUMB_W 160
+#define SAVE_THUMB_H 120
+#endif
+#define SAVE_THUMB_SIZE (SAVE_THUMB_W * SAVE_THUMB_H)
+
 /*----------------- Recupere pointeur Anim3DS -------------------*/
 
 #define	GetPtrAnim3DS(num)	(U8 *)HQR_Get( HQRPtrAnim3DS, num )

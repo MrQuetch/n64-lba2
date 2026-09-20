@@ -107,13 +107,25 @@ if [ -d "$GAMEDATA" ]; then
         base=$(basename "$f" | tr 'A-Z' 'a-z')
         cp -u "$f" "$DFSROOT/$base"
     done
-    # The engine's user/cfg dir points at rom:/saves/ (read-only in V1;
-    # real saves move to cartridge SRAM later). mkdfs skips empty dirs, so
-    # ship placeholders, and pre-stage lba2.cfg at the config path so the
-    # engine never tries to write its embedded template to the read-only DFS.
-    mkdir -p "$DFSROOT/saves/save"
-    [ -f "$DFSROOT/saves/save/placeholder.txt" ] || echo "LBA2 N64 saves placeholder" > "$DFSROOT/saves/save/placeholder.txt"
-    cp -u SOURCES/LBA2.CFG "$DFSROOT/saves/lba2.cfg"
+    # The engine's user/cfg dir is cartridge SRAM ("sram:/", see
+    # LIB386/SYSTEM/N64_SRAMFS.CPP): saves and lba2.cfg live there. On a blank
+    # SRAM the engine copies the default cfg from the resource dir, so stage
+    # it at the DFS root with the N64 defaults (English text; the stock file
+    # is Adeline's French dev config).
+    # Developer overrides (DebugStartCube, DebugSaveTest...) go in
+    # build-n64/lba2.cfg.local, appended to the staged file. Mind that the
+    # engine copies the cfg into SRAM on first boot only: delete the
+    # emulator's .ram/.sav to see a changed default again.
+    rm -rf "$DFSROOT/saves" # layout of the read-only V1 (rom:/saves/)
+    {
+        sed 's/^Language: .*/Language: English/' SOURCES/LBA2.CFG
+        if [ -f build-n64/lba2.cfg.local ]; then echo; cat build-n64/lba2.cfg.local; fi
+    } > "$DFSROOT/lba2.cfg.new"
+    if ! cmp -s "$DFSROOT/lba2.cfg.new" "$DFSROOT/lba2.cfg" 2>/dev/null; then
+        mv "$DFSROOT/lba2.cfg.new" "$DFSROOT/lba2.cfg"
+    else
+        rm -f "$DFSROOT/lba2.cfg.new"
+    fi
     # --- Music: GOG .ogg -> .wav64 (VADPCM, decoded on the RSP by the libdragon
     # mixer). We used Opus (--wav-compress 3) before, but Opus decodes on the
     # VR4300 CPU — heavy enough to drop the frame rate and crackle during

@@ -129,7 +129,9 @@ static inline char *SDL_GetCurrentDirectory(void) {
 static inline char *SDL_GetPrefPath(const char *org, const char *app) {
     (void)org; (void)app;
 #ifdef LBA2_TARGET_N64
-    const char *n64p = "rom:/saves/";
+    // User dir = cartridge SRAM (saves under save/, lba2.cfg at the root),
+    // served by the "sram:/" devoptab in LIB386/SYSTEM/N64_SRAMFS.CPP.
+    const char *n64p = "sram:/";
     char *n64r = (char *)malloc(strlen(n64p) + 1);
     if (n64r) strcpy(n64r, n64p);
     return n64r;

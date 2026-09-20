@@ -26,6 +26,67 @@ extern "C" void N64SetScreenMargin(int pct);
 // "DebugStartCube: N" in LBA2.CFG: skip the menus and start a new game in
 // cube N (the console's `cube` command is stubbed on N64). -1 = off.
 static S32 N64DebugStartCube = -1;
+// "DebugSaveTest: 1" in LBA2.CFG: once the first cube is up, exercise the
+// SRAM save path without any input (save a slot + current.lba, list the
+// saves, read the slot back) and log the outcome. Emulator-side self-test
+// for the cartridge filesystem; 0 = off.
+static S32 N64DebugSaveTest = 0;
+
+static void N64RunDebugSaveTest(void) {
+    static S32 done = FALSE;
+    if (!N64DebugSaveTest OR done) return;
+    done = TRUE;
+
+    char memoplayername[MAX_SIZE_PLAYER_NAME + 1];
+    char memogamepathname[ADELINE_MAX_PATH];
+    strcpy(memoplayername, PlayerName);
+    strcpy(memogamepathname, GamePathname);
+
+    LogPrintf("[sramtest] cube %d: saving slot 'SRAMTEST'\n", (int)NumCube);
+    strcpy(PlayerName, "SRAMTEST");
+    GetSavePath(GamePathname, ADELINE_MAX_PATH, "SRAMTEST.LBA");
+    NumVersion = NUM_VERSION | SAVE_COMPRESS;
+    SaveGame(TRUE);
+    LogPrintf("[sramtest] slot on disk: %lu bytes\n", (unsigned long)FileSize(GamePathname));
+
+    CurrentSaveGame(); // current.lba, the "resume game" file
+
+    strcpy(PlayerName, "");
+    LoadGamePlayerName();
+    LogPrintf("[sramtest] read back: player '%s'%s\n", PlayerName,
+              strcmp(PlayerName, "SRAMTEST") ? "  <-- MISMATCH" : "");
+
+    S32 nb = PlayerGameList((char **)BufSpeak, (char *)BufSpeak + 100000L, FALSE);
+    LogPrintf("[sramtest] PlayerGameList: %d save(s)\n", (int)nb);
+    for (S32 i = 0; i < nb; i++) LogPrintf("[sramtest]   %s\n", ((char **)BufSpeak)[i]);
+
+    if (N64DebugSaveTest >= 2) {
+        // Fill the cartridge: how many slots fit, and does a failed write
+        // leave the filesystem intact? Extra slots are removed afterwards.
+        S32 n = 0;
+        for (;;) {
+            char fname[32];
+            snprintf(PlayerName, MAX_SIZE_PLAYER_NAME + 1, "FILL%02d", (int)n);
+            snprintf(fname, sizeof(fname), "%s.LBA", PlayerName);
+            GetSavePath(GamePathname, ADELINE_MAX_PATH, fname);
+            SaveGame(TRUE);
+            if (!FileSize(GamePathname)) break;
+            n++;
+        }
+        LogPrintf("[sramtest] SRAM full after %d extra slot(s)\n", (int)n);
+        for (S32 i = 0; i < n; i++) {
+            char fname[32];
+            snprintf(fname, sizeof(fname), "FILL%02d.LBA", (int)i);
+            GetSavePath(GamePathname, ADELINE_MAX_PATH, fname);
+            Delete(GamePathname);
+        }
+        nb = PlayerGameList((char **)BufSpeak, (char *)BufSpeak + 100000L, FALSE);
+        LogPrintf("[sramtest] after cleanup: %d save(s)\n", (int)nb);
+    }
+
+    strcpy(PlayerName, memoplayername);
+    strcpy(GamePathname, memogamepathname);
+}
 #endif
 
 #ifdef LBA2_TARGET_WIIU
@@ -686,6 +747,9 @@ restartloop:
                 WIIU_FIRST_FMT(wiiu_first_iter_done, "[trace] MainLoop: ChangeCube enter (NewCube=%d, NumCube=%d)\n", NewCube, NumCube);
                 ChangeCube();
                 WIIU_FIRST_FMT(wiiu_first_iter_done, "[trace] MainLoop: ChangeCube exit (now NumCube=%d)\n", NumCube);
+#ifdef LBA2_TARGET_N64
+                N64RunDebugSaveTest();
+#endif
             }
 
             FirstLoop = TRUE; // premiere boucle d'un cube
@@ -2243,6 +2307,7 @@ void ReadConfigFile(void) {
     // so CRT overscan doesn't eat the dialogue text; missing key = 6.
     N64SetScreenMargin(DefFileBufferReadValueDefault("ScreenMargin", 6));
     N64DebugStartCube = DefFileBufferReadValueDefault("DebugStartCube", -1);
+    N64DebugSaveTest = DefFileBufferReadValueDefault("DebugSaveTest", 0);
 #endif
 
     Version_US = DefFileBufferReadValue("Version_US");

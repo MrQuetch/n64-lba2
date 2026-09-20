@@ -17,6 +17,7 @@
 #include <SYSTEM/LIMITS.H>
 #include <SYSTEM/LOGPRINT.H>
 #include <SYSTEM/MOUSE.H>
+#include <SYSTEM/N64_SRAMFS.H>
 #include <SYSTEM/STRING.H>
 #include <SYSTEM/TIMER.H>
 #include <SYSTEM/WINDOW.H>
@@ -995,6 +996,9 @@ int main(int argc, char *argv[]) {
 
     int dfsOk = (dfs_init(DFS_DEFAULT_LOCATION) == DFS_ESUCCESS);
     debugf("[LBA2] DFS: %s\n", dfsOk ? "mounted (rom:/)" : "NOT PRESENT (no assets in ROM yet)");
+
+    // Saves and lba2.cfg live in cartridge SRAM (engine user dir = "sram:/").
+    N64SramFs_Init();
 
     (void)argc;
     (void)argv;

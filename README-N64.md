@@ -75,9 +75,9 @@ docker/Dockerfile.n64 docker`.
 ```
 
 The output is `lba2.z64` (~62 MB with English voices). The ROM header
-declares 256 Kbit SRAM (for the future save implementation) and the game
-needs the **Expansion Pak** (8 MB): the engine's static footprint alone is
-~2.2 MB and the HQR caches, framebuffers and Z-buffer take another 5 MB.
+declares 256 Kbit SRAM (saves and settings live there, see below) and the
+game needs the **Expansion Pak** (8 MB): the engine's static footprint alone
+is ~2.2 MB and the HQR caches, framebuffers and Z-buffer take another 5 MB.
 
 ## Running
 
@@ -87,9 +87,22 @@ needs the **Expansion Pak** (8 MB): the engine's static footprint alone is
   port's main diagnostic channel (asserts come with a symbolic backtrace).
 - **Hardware:** any flashcart that supports 64 MB ROMs and SRAM
   (EverDrive-64, SummerCart64, …) with an Expansion Pak fitted.
+- **Saves and settings** are kept in the cartridge's 32 KB SRAM, presented
+  to the engine as a tiny `sram:/` filesystem (`LIB386/SYSTEM/N64_SRAMFS.CPP`).
+  A save is ~4 KB (LZSS, 80×60 thumbnail), so about six slots plus the
+  "resume game" file fit; when the memory is full the save menu says so and
+  a slot has to be deleted (load menu). `lba2.cfg` lives there too, so
+  language, volumes and options persist. Emulators keep the image next to the
+  ROM (`lba2.ram` in Ares); flashcarts write it back to the SD card on
+  reset/power-off as usual. N64 saves are not byte-compatible with PC ones.
 - **Debug start:** `DebugStartCube: N` in `LBA2.CFG` skips the menus and
   starts a new game in cube N (the debug console's `cube` command is not
   available on N64). Scene numbers are in [docs/SCENES.md](docs/SCENES.md).
+  Developer keys go in `build-n64/lba2.cfg.local` (appended to the staged
+  default cfg); since the cfg is copied into SRAM on first boot only, delete
+  the emulator's `lba2.ram` to pick up a changed default. `DebugSaveTest: 1`
+  (or `2` to fill the SRAM) runs an input-free self-test of the save path
+  once the first cube is up and logs the result (`[sramtest]`).
 - **CRT safe area:** the picture is scaled by the VI into a window 6 % smaller
   on each side, so consumer CRTs (which overscan by 4–8 %) show the whole
   dialogue text; emulators and upscalers see a thin black border instead.
@@ -99,10 +112,9 @@ needs the **Expansion Pak** (8 MB): the engine's static footprint alone is
 
 ## Known limitations / WIP
 
-- **No saving.** The engine's save directory points at the read-only DFS in
-  the cartridge; saves need to move to SRAM (a LBA2 save game is ~20 KB,
-  most of it the 160×120 thumbnail). The save name keyboard already works
-  (confirm with START).
+- **Save slots.** 32 KB of SRAM hold about six saves plus the resume file; the
+  game tells you when it is full. (768 Kbit SRAM would triple that but is
+  not supported by every flashcart.)
 - **Exterior stalls.** Entering a new exterior area costs 2–3 frames of
   ~1 s each: the first full render of the 9 surrounding terrain cubes and
   their ~100 decor objects. Earlier versions stalled for 6–7 s because the

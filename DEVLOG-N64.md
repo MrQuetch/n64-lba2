@@ -171,6 +171,40 @@ frame after `__onCriticalException`; a self-test confirmed `lw` into s1 now
 returns the loaded value. `AffBrickBlock` additionally skips (and logs) a
 cell whose block index is outside the library instead of freezing.
 
+## Saving to the cartridge
+
+The engine saves through plain POSIX calls — `open`/`read`/`write`/`stat`/
+`unlink` in `LIB386/SYSTEM/FILES.CPP`, a directory scan for `*.LBA` in the
+load menu, `lba2.cfg` rewritten key by key. On N64 the only writable
+storage is the 32 KB of battery-backed SRAM declared in the ROM header, so
+instead of teaching `SAVEGAME.CPP` about it, the SRAM became a filesystem:
+libdragon lets a program register a prefix with a table of callbacks
+(`attach_filesystem`), and newlib routes every `sram:/…` path to it — the
+engine's user directory simply moved from `rom:/saves/` to `sram:/`. The
+image is mirrored in RDRAM (header with magic and CRC32, then packed
+records `size, name, data`); reads are served from the mirror, a write is
+buffered per handle and, on `close()`, the whole image is rebuilt and DMA'd
+to the cartridge at `0x08000000` with the PI domain-2 timings every SRAM
+title programs. Name lookup is case-insensitive, because the engine probes
+case variations of each path (it grew up on DOS). A blank or foreign part
+fails the CRC and is formatted; a write that runs out of room is dropped
+whole, so a failed save never leaves a truncated record for the load menu
+to trip on.
+
+The diet mattered more than the plumbing. A PC save is ~20 KB, 19,200 of
+them the 160×120 thumbnail, and the PC engine stores the automatic
+`current.lba` uncompressed. On N64 the thumbnail is drawn at 80×60 physical
+pixels anyway (320×240 output), so that is what gets stored (4,800 bytes),
+and `current.lba` goes through the same LZSS as the manual slots: a save is
+now ~4 KB, and about six slots plus the resume file fit next to `lba2.cfg` —
+which also moved into SRAM, so language and volume settings finally stick
+(the first-boot default is English rather than the French dev config).
+The one place the PC engine assumes a write cannot fail is the save menu;
+it now checks the file afterwards and shows "Cartridge memory is full" in
+the menu font. An input-free self-test (`DebugSaveTest` in the cfg) saves,
+lists, reads back and fills the SRAM from a `DebugStartCube` boot, which
+is how the layer was verified in Ares before the ROM went to the tester.
+
 ## Diagnostics kept in the tree
 
 - `[renderprof]`/`[affprof]`: per-60-frame breakdown (terrain, object fill,

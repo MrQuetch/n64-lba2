@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include <SVGA/SCREEN.H>
+#include <SYSTEM/LOGPRINT.H>
 #include "DIRECTORIES.H"
 #include "INPUT.H"
 
@@ -193,7 +194,12 @@ void AutoSaveGame() {
     }
 #endif
 
+#ifdef LBA2_TARGET_N64
+    // 32 KB of cartridge SRAM: compress the automatic saves like the manual ones.
+    NumVersion = NUM_VERSION | SAVE_COMPRESS;
+#else
     NumVersion = NUM_VERSION; // Sauvegarde non compactee
+#endif
 
     SaveGame(FALSE);
 
@@ -238,7 +244,12 @@ void CurrentSaveGame() {
     }
 #endif
 
+#ifdef LBA2_TARGET_N64
+    // 32 KB of cartridge SRAM: compress the automatic saves like the manual ones.
+    NumVersion = NUM_VERSION | SAVE_COMPRESS;
+#else
     NumVersion = NUM_VERSION; // Sauvegarde non compactee
+#endif
 
     SaveGame(FALSE);
 
@@ -260,23 +271,23 @@ void SaveGame(S32 flagmess) {
     //	char string[30] ;
     //	S32	x0, y0, x1, y1 ;
 
-    // Image 160x120
+    // Image 160x120 (SAVE_THUMB_W x SAVE_THUMB_H)
 #if RS_SHIFT
-    // [renderscale] the physical Log is 320x240: a 2x box-sample gives the
-    // 160x120 linear thumbnail the save format expects.
+    // [renderscale] the physical Log is 320x240: point-sample it down to the
+    // linear SAVE_THUMB_W x SAVE_THUMB_H thumbnail (80x60 on N64: a 4:1 step).
     {
         U8 *dst = BufSpeak + 150000L;
-        for (S32 j = 0; j < 120; j++) {
-            const U8 *src = (const U8 *)Log + TabOffLine[(j * PhysResY) / 120];
-            for (S32 i = 0; i < 160; i++)
-                dst[j * 160 + i] = src[(i * PhysResX) / 160];
+        for (S32 j = 0; j < SAVE_THUMB_H; j++) {
+            const U8 *src = (const U8 *)Log + TabOffLine[(j * PhysResY) / SAVE_THUMB_H];
+            for (S32 i = 0; i < SAVE_THUMB_W; i++)
+                dst[j * SAVE_THUMB_W + i] = src[(i * PhysResX) / SAVE_THUMB_W];
         }
     }
 #else
     ScaleBox(0, 0, 639, 479, Log, 0, 0, 159, 119, BufSpeak + 50000L); // old Screen
     SaveBlock(BufSpeak + 50000L, BufSpeak + 150000L, 0, 0, 159, 119);
 #endif
-    RemapPicture(BufSpeak + 150000L, 160 * 120);
+    RemapPicture(BufSpeak + 150000L, SAVE_THUMB_SIZE);
 
     if (flagmess) {
 /*		strcpy( string, "Sauvegarde en cours ..." ) ;
@@ -327,7 +338,7 @@ if (NumVersion & SAVE_COMPRESS) {
 }
 
 #ifndef EDITLBA2
-LbaWrite(BufSpeak + 150000L, 160 * 120);
+LbaWrite(BufSpeak + 150000L, SAVE_THUMB_SIZE);
 #else
     LbaWrite(PtrScreenSave, 160 * 120);
 #endif
@@ -363,6 +374,11 @@ if (NumVersion & SAVE_COMPRESS) // Version compactee
 }
 
 #ifndef EDITLBA2
+#ifdef LBA2_TARGET_N64
+LogPrintf("[save] '%s': %ld bytes (%s, raw context %ld)\n", GamePathname,
+          (long)(PtrSave - (BufSpeak + 50000L)),
+          (NumVersion & SAVE_COMPRESS) ? "LZSS" : "uncompressed", (long)sizefile);
+#endif
 Save(GamePathname, BufSpeak + 50000L, PtrSave - (BufSpeak + 50000L));
 #else
     Save(GamePathname, (U8 *)Screen, PtrSave - (U8 *)Screen);
@@ -407,7 +423,7 @@ void LoadGameNumCube() {
         ExpandLZ(PtrSave, ptrdecomp, sizefile, 2);
     }
 
-    PtrSave += 160 * 120; // Skip Image
+    PtrSave += SAVE_THUMB_SIZE; // Skip Image
 
     // list Var game
     LbaRead(ListVarGame, MAX_VARS_GAME * sizeof(ListVarGame[0]));
@@ -534,7 +550,7 @@ S32 LoadGame(void) {
     }
 #endif
 
-    PtrSave += 160 * 120;
+    PtrSave += SAVE_THUMB_SIZE;
 
 #ifdef EDITLBA2
     LoadContexte(&KeepTimerRefHR);
@@ -613,7 +629,7 @@ S32 LoadGameOldVersion(void) {
     }
 #endif
 
-    PtrSave += 160 * 120;
+    PtrSave += SAVE_THUMB_SIZE;
 
     // list Var game and cube
 #ifdef EDITLBA2

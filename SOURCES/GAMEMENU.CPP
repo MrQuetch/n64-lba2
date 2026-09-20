@@ -922,6 +922,48 @@ void DrawOneString(S32 x, S32 y, char *playername, S32 draw) {
 }
 
 /*──────────────────────────────────────────────────────────────────────────*/
+#ifdef LBA2_TARGET_N64
+// Saves live in the 32 KB cartridge SRAM (LIB386/SYSTEM/N64_SRAMFS.CPP); the
+// PC engine assumes a disk write never fails and says nothing when it does.
+// Tell the player why the slot did not appear, on top of the shaded menu
+// background, and wait for a button. Hard-coded English: the port has no
+// translated text of its own (the dialogue HQRs are the retail ones).
+static void N64SaveFailedNotice(void) {
+    static const char *lines[] = {"Cartridge memory is full.",
+                                  "Delete a saved game and try again."};
+    const S32 nb = 2;
+    S32 width = 0;
+    for (S32 i = 0; i < nb; i++) {
+        S32 sf = SizeFont((char *)lines[i]);
+        if (sf > width) width = sf;
+    }
+    const S32 x0 = 320 - width / 2 - 30, x1 = 320 + width / 2 + 30;
+    const S32 y0 = 240 - (nb * HAUTEUR_STANDARD) / 2 - 10;
+    const S32 y1 = 240 + (nb * HAUTEUR_STANDARD) / 2 + 10;
+
+    CopyScreen(Screen, Log);
+    ShadeBoxBlk(0, 0, 639, 479, SCREEN_SHADE_LVL);
+    BackupAngles(x0, y0, x1, y1);
+    ShadeBoxBlk(x0, y0, x1, y1, MENU_SHADE_LVL);
+    DrawCadre(x0, y0, x1, y1, ALL_ANGLES);
+    RestoreAngles(x0, y0, x1, y1);
+    for (S32 i = 0; i < nb; i++) {
+        const S32 y = y0 + 10 + i * HAUTEUR_STANDARD;
+        const S32 x = 320 - SizeFont((char *)lines[i]) / 2;
+        ColorFont(BLACK);
+        Font(x + 4, y + 4, (char *)lines[i]);
+        ColorFont(CoulTextMenu);
+        Font(x, y, (char *)lines[i]);
+    }
+    BoxStaticFullflip();
+
+    WaitNoInput();
+    WaitInput();
+    WaitNoInput();
+}
+#endif
+
+/*──────────────────────────────────────────────────────────────────────────*/
 
 void ClearOneString(S32 x, S32 y) {
     S32 x0, y0, x1, y1;
@@ -3085,16 +3127,16 @@ void DrawScreenSave(U8 *ptr, S32 x, S32 y) {
     BackupAngles(x - 1, y - 1, x1 + 1, y1 + 1);
     Box(x, y, x1, y1, 0);
 #if RS_SHIFT
-    // [renderscale] ptr is the 160x120 linear thumbnail of the save file;
-    // draw it downscaled into the physical rectangle.
+    // [renderscale] ptr is the SAVE_THUMB_W x SAVE_THUMB_H linear thumbnail
+    // of the save file; resample it into the physical rectangle (1:1 on N64).
     {
         const S32 px0 = RS_V2P(x), py0 = RS_V2P(y);
         const S32 pw = RS_V2P(x1) - px0 + 1, ph = RS_V2P(y1) - py0 + 1;
         for (S32 j = 0; j < ph; j++) {
             U8 *dst = (U8 *)Log + TabOffLine[py0 + j] + px0;
-            const U8 *src = ptr + ((j * SCREEN_SAVE_HEIGHT) / ph) * SCREEN_SAVE_WIDTH;
+            const U8 *src = ptr + ((j * SAVE_THUMB_H) / ph) * SAVE_THUMB_W;
             for (S32 i = 0; i < pw; i++)
-                dst[i] = src[(i * SCREEN_SAVE_WIDTH) / pw];
+                dst[i] = src[(i * SAVE_THUMB_W) / pw];
         }
     }
 #else
@@ -3574,6 +3616,10 @@ S32 MainGameMenu(S32 load) {
                     if (FileSize(OldGamePathname))
                         Delete(OldGamePathname);
                     SaveGame(TRUE);
+#ifdef LBA2_TARGET_N64
+                    if (!FileSize(GamePathname))
+                        N64SaveFailedNotice(); // SRAM full: Save() only logs
+#endif
                     HQ_ResumeSamples();
                     UnsetClipWindow();
                 }
