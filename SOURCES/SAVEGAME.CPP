@@ -34,6 +34,9 @@ extern S32 InvSelect; // GAMEMENU.C
 
 U8 *PtrSave;
 
+// Size of the buffers a save is loaded into (MEM.CPP: Screen, BufSpeak).
+#define SAVE_LOAD_BUF_SIZE (640L * 480L + RECOVER_AREA)
+
 #if defined(DEBUG_TOOLS) || defined(TEST_TOOLS) || defined(EDITLBA2)
 typedef struct {
     S32 v[4];
@@ -60,35 +63,94 @@ char *ListDemoSave[NB_DEMOSAVE] = {
  *══════════════════════════════════════════════════════════════════════════*/
 #define PtrOpen() PtrSave = Screen
 
+// A save is a packed byte stream: a one-byte version, then longs, the player
+// name, the thumbnail... so every 16/32-bit field after the first byte sits at
+// an odd address. x86 and PPC shrug at that; MIPS raises an address error, and
+// the N64 port emulates the faulting instruction in its exception handler
+// (LIB386/SYSTEM/N64_BACKEND.CPP). That emulation is slow and — before the
+// libdragon inthandler patch — silently dropped results written into a
+// callee-saved register: `lw s0,1(a1)` for the compressed-size header field
+// left s0 holding a stale pointer, and LoadGameScreen memcpy'd to a wild
+// address. Read and write through memcpy of a constant size instead: GCC emits
+// lwl/lwr (or plain lw when it can prove the alignment), never traps, and
+// compiles to exactly the same code as before on the aligned targets.
 //-------- Lecture
-#define LbaRead(ptr, size)      \
-    memcpy(ptr, PtrSave, size); \
-    PtrSave += size;
+#define LbaRead(ptr, size)          \
+    do {                            \
+        memcpy(ptr, PtrSave, size); \
+        PtrSave += (size);          \
+    } while (0)
 
-#define LbaReadByte(ptr) ptr = *PtrSave++;
+#define LbaReadByte(ptr)     \
+    do {                     \
+        (ptr) = *PtrSave++;  \
+    } while (0)
 
-#define LbaReadWord(ptr)   \
-    ptr = *(S16 *)PtrSave; \
-    PtrSave += 2;
+#define LbaReadWord(ptr)                 \
+    do {                                 \
+        S16 lba_tmp_;                    \
+        memcpy(&lba_tmp_, PtrSave, 2);   \
+        PtrSave += 2;                    \
+        (ptr) = lba_tmp_;                \
+    } while (0)
 
-#define LbaReadLong(ptr)   \
-    ptr = *(S32 *)PtrSave; \
-    PtrSave += 4;
+#define LbaReadLong(ptr)                 \
+    do {                                 \
+        S32 lba_tmp_;                    \
+        memcpy(&lba_tmp_, PtrSave, 4);   \
+        PtrSave += 4;                    \
+        (ptr) = lba_tmp_;                \
+    } while (0)
 
 //-------- Ecriture
-#define LbaWrite(ptr, size)     \
-    memcpy(PtrSave, ptr, size); \
-    PtrSave += size;
+#define LbaWrite(ptr, size)         \
+    do {                            \
+        memcpy(PtrSave, ptr, size); \
+        PtrSave += (size);          \
+    } while (0)
 
-#define LbaWriteByte(val) *PtrSave++ = val;
+#define LbaWriteByte(val)    \
+    do {                     \
+        *PtrSave++ = (val);  \
+    } while (0)
 
-#define LbaWriteWord(val)  \
-    *(S16 *)PtrSave = val; \
-    PtrSave += 2;
+#define LbaWriteWord(val)                \
+    do {                                 \
+        S16 lba_tmp_ = (S16)(val);       \
+        memcpy(PtrSave, &lba_tmp_, 2);   \
+        PtrSave += 2;                    \
+    } while (0)
 
-#define LbaWriteLong(val)  \
-    *(S32 *)PtrSave = val; \
-    PtrSave += 4;
+#define LbaWriteLong(val)                \
+    do {                                 \
+        S32 lba_tmp_ = (S32)(val);       \
+        memcpy(PtrSave, &lba_tmp_, 4);   \
+        PtrSave += 4;                    \
+    } while (0)
+
+/*──────────────────────────────────────────────────────────────────────────*/
+// Expand a compressed save in place: the compressed tail still sitting at
+// PtrSave is first moved up past where the expanded image will land, then
+// ExpandLZ walks it back down. Both the expanded image (sizefile) and the
+// moved tail (size) must fit the load buffer; a truncated file, or a header
+// field read wrong, would otherwise point the copy at an arbitrary address.
+// bufend = end of the buffer the save was loaded into, NULL = don't check.
+static S32 SaveExpandInPlace(U8 *bufend, S32 sizefile, S32 size) {
+    if (bufend) {
+        S32 room = (S32)(bufend - PtrSave);
+
+        if (sizefile <= 0 || size <= 0 || sizefile > room - RECOVER_AREA - size) {
+            LogPrintf("Warning: save '%s' looks corrupt (expanded %ld + packed %ld, room %ld)"
+                      " - refused\n",
+                      GamePathname, (long)sizefile, (long)size, (long)room);
+            return FALSE;
+        }
+    }
+
+    memcpy(PtrSave + sizefile + RECOVER_AREA, PtrSave, size);
+    ExpandLZ(PtrSave, PtrSave + sizefile + RECOVER_AREA, sizefile, 2);
+    return TRUE;
+}
 
 /*──────────────────────────────────────────────────────────────────────────*/
 // Resultat pas terrible
@@ -411,16 +473,14 @@ void LoadGameNumCube() {
 
     if (numversion & SAVE_COMPRESS) // Version compactee
     {
-        U8 *ptrdecomp;
         S32 sizefile;
         S32 size;
 
         LbaReadLong(sizefile);
         size = FileSize(GamePathname) - (PtrSave - (U8 *)Screen);
 
-        ptrdecomp = (U8 *)PtrSave + sizefile + RECOVER_AREA;
-        memcpy(ptrdecomp, PtrSave, size);
-        ExpandLZ(PtrSave, ptrdecomp, sizefile, 2);
+        if (!SaveExpandInPlace((U8 *)Screen + SAVE_LOAD_BUF_SIZE, sizefile, size))
+            return;
     }
 
     PtrSave += SAVE_THUMB_SIZE; // Skip Image
@@ -483,20 +543,23 @@ U8 *LoadGameScreen() {
 
     if (NumVersion & SAVE_COMPRESS) // Version compactee
     {
-        U8 *ptrdecomp;
+        U8 *bufend;
         S32 sizefile;
         S32 size;
 
         LbaReadLong(sizefile);
 #ifdef EDITLBA2
         size = FileSize(GamePathname) - (PtrSave - BufTempo);
+        bufend = NULL; // editor build: BufTempo, size unknown here
 #else
         size = FileSize(GamePathname) - (PtrSave - (BufSpeak + 50000L));
+        bufend = BufSpeak + SAVE_LOAD_BUF_SIZE;
 #endif
 
-        ptrdecomp = (U8 *)PtrSave + sizefile + RECOVER_AREA;
-        memcpy(ptrdecomp, PtrSave, size);
-        ExpandLZ(PtrSave, ptrdecomp, sizefile, 2);
+        // A corrupt slot must not take the game down: the menu draws the
+        // thumbnail of current.lba on every cursor move.
+        if (!SaveExpandInPlace(bufend, sizefile, size))
+            return (NULL);
     }
 
     return (PtrSave);
@@ -527,16 +590,16 @@ S32 LoadGame(void) {
 
     if (NumVersion & SAVE_COMPRESS) // Version compactee
     {
-        U8 *ptrdecomp;
         S32 sizefile;
         S32 size;
 
         LbaReadLong(sizefile);
         size = FileSize(GamePathname) - (PtrSave - (U8 *)Screen);
 
-        ptrdecomp = (U8 *)PtrSave + sizefile + RECOVER_AREA;
-        memcpy(ptrdecomp, PtrSave, size);
-        ExpandLZ(PtrSave, ptrdecomp, sizefile, 2);
+        // Refusing beats loading garbage: the caller falls back to
+        // InitLoadedGame() instead of running on a wild PtrSave.
+        if (!SaveExpandInPlace((U8 *)Screen + SAVE_LOAD_BUF_SIZE, sizefile, size))
+            return FALSE;
 
 #ifdef EDITLBA2
         SizeFile = sizefile + (PtrSave - (U8 *)Screen - sizeof(sizefile));
@@ -606,16 +669,14 @@ S32 LoadGameOldVersion(void) {
 
     if (NumVersion & SAVE_COMPRESS) // Version compactee
     {
-        U8 *ptrdecomp;
         S32 sizefile;
         S32 size;
 
         LbaReadLong(sizefile);
         size = FileSize(GamePathname) - (PtrSave - (U8 *)Screen);
 
-        ptrdecomp = (U8 *)PtrSave + sizefile /*- size*/ + RECOVER_AREA;
-        memcpy(ptrdecomp, PtrSave, size);
-        ExpandLZ(PtrSave, ptrdecomp, sizefile, 2);
+        if (!SaveExpandInPlace((U8 *)Screen + SAVE_LOAD_BUF_SIZE, sizefile, size))
+            return FALSE;
 
 #ifdef EDITLBA2
         SizeFile = sizefile + (PtrSave - (U8 *)Screen - sizeof(sizefile));

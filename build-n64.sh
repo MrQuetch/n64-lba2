@@ -192,4 +192,29 @@ else
     echo "[build-n64] WARNING: $GAMEDATA not found - ROM will have no assets (set GAMEDATA=/path/to/retail/data)"
 fi
 
-exec make -f Makefile.n64 "$@"
+make -f Makefile.n64 "$@" || exit $?
+
+# --- Toolchain sanity: the libdragon inthandler patch --------------------------
+# The port emulates unaligned accesses in its address-error handler
+# (LIB386/SYSTEM/N64_BACKEND.CPP), which writes the result into the saved
+# register frame. Stock libdragon never reloads s0-s7 on the way out of an
+# exception, so an emulated load into one of those registers is silently
+# dropped and the code runs on a stale value - rare, scene-dependent, and it
+# has already cost two hardware crashes. docker/Dockerfile.n64 patches
+# inthandler.S; a toolchain image built before that patch produces a ROM that
+# looks fine and misbehaves in the field, so refuse to ship one.
+if [ -f build-n64/lba2.elf ]; then
+    CRIT=$(mips64-elf-nm build-n64/lba2.elf 2>/dev/null | awk '/ [Tt] exception_critical$/ { print $1; exit }')
+    if [ -n "$CRIT" ]; then
+        if mips64-elf-objdump -d --start-address=$((0x$CRIT)) --stop-address=$((0x$CRIT + 64)) \
+               build-n64/lba2.elf 2>/dev/null | grep -q 's7,216(sp)'; then
+            echo "[build-n64] toolchain: libdragon inthandler s0-s7 reload OK"
+        else
+            echo "[build-n64] ERROR: this toolchain image's libdragon lacks the inthandler"
+            echo "           s0-s7 reload patch - emulated unaligned loads into s0-s7 would"
+            echo "           be dropped. Rebuild the image and then this ROM:"
+            echo "           docker build -t n64lba-toolchain:latest -f docker/Dockerfile.n64 docker"
+            exit 1
+        fi
+    fi
+fi

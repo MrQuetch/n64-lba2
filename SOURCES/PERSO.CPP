@@ -64,6 +64,24 @@ static void N64RunDebugSaveTest(void) {
     LogPrintf("[sramtest] PlayerGameList: %d save(s)\n", (int)nb);
     for (S32 i = 0; i < nb; i++) LogPrintf("[sramtest]   %s\n", ((char **)BufSpeak)[i]);
 
+    // Thumbnail of current.lba, the way the pause menu draws it on every
+    // cursor move (GAMEMENU.CPP DoGameMenu). This is the decompression path:
+    // its header fields sit at odd offsets, and reading the compressed size
+    // wrong is what sent memcpy to a wild address on a tester's console.
+    {
+        U8 memonumversion = NumVersion;
+        S32 memonewcube = NewCube;
+        U8 *ptr;
+
+        GetSavePath(GamePathname, ADELINE_MAX_PATH, CURRENTSAVE_FILENAME);
+        ptr = LoadGameScreen();
+        LogPrintf("[sramtest] LoadGameScreen(current.lba): %s (version 0x%02x, cube %d, player '%s')\n",
+                  ptr ? "ok" : "REFUSED", (unsigned)NumVersion, (int)NewCube, PlayerName);
+
+        NumVersion = memonumversion;
+        NewCube = memonewcube;
+    }
+
     if (N64DebugSaveTest >= 2) {
         // Fill the cartridge: how many slots fit, and does a failed write
         // leave the filesystem intact? Extra slots are removed afterwards.

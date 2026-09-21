@@ -237,6 +237,41 @@ matter are fewer and bigger triangles for the far cubes (a 33×33 grid
 would take ~60 ms off the vertex phase alone), a cheaper span setup in the
 fillers for small triangles, and the decor objects.
 
+## The same bug, shipped by someone else's toolchain
+
+A second tester — building the ROM themselves rather than running ours —
+hit a CPU exception while in the save menu: `Write to invalid memory
+address` at `0x004B6FA1`, inside `memcpy` called from `LoadGameScreen`
+(SAVEGAME.CPP), itself called from `DoGameMenu`. That call is not the save:
+the pause menu redraws the thumbnail of `current.lba` on every cursor move.
+
+The arithmetic gives the whole story. `LoadGameScreen` computes
+`ptrdecomp = PtrSave + sizefile + RECOVER_AREA` and moves the compressed
+tail there before expanding it. In our own build GCC compiles the header
+read as `lw s0,1(a1)`: a save is a packed byte stream, and the compressed
+size sits at offset 13 of `current.lba` (version byte, `NumCube`,
+`"CURRENT"` and its NUL), so the load is always unaligned and always
+emulated. With s0 still holding `lui s0,0x8012` — the high half of
+`GamePathname`, set a few instructions earlier — the sum
+`0x80396DA1 + 0x80120000 + 0x200` wraps a 32-bit pointer straight into
+kuseg and lands on `0x004B6FA1`, the exact address on the tester's screen.
+The dropped s-register write again, in a build made from a checkout that
+carries the `inthandler.S` patch — but with a toolchain image predating it.
+`build-n64.sh` only builds that image when it is missing, so a stale one is
+reused in silence.
+
+Two conclusions, both in the tree now. The build refuses to link a ROM
+whose libdragon lacks the patch (it disassembles `exception_critical` and
+looks for the s0–s7 reload), and `tools-n64/check_rom_unaligned_fix.py`
+answers the same question for a ROM someone already has. And the save path
+stops depending on the emulator at all: the `LbaRead*`/`LbaWrite*` macros
+now go through `memcpy` of a constant size, which GCC turns into byte or
+`lwl/lwr` sequences instead of a trapping `lw` — 16 KB of code for a file
+format that is read once per menu redraw. The four decompression sites also
+validate the header against the end of the load buffer first, so a save
+that is corrupt for any other reason is refused (an empty thumbnail, or a
+fresh start) instead of writing wherever the arithmetic points.
+
 ## Diagnostics kept in the tree
 
 - `[renderprof]`/`[affprof]`: per-60-frame breakdown (terrain, object fill,
@@ -257,3 +292,6 @@ fillers for small triangles, and the decor objects.
 - `tools-n64/run-ares.ps1` redirects Ares' stdout (the ROM's ISViewer
   channel) to `ares_log.txt`: boot trace, engine logs, libdragon asserts
   with symbolic backtraces.
+- `tools-n64/check_rom_unaligned_fix.py <rom.z64>` says whether a ROM was
+  linked against a patched libdragon (the s0–s7 reload). Worth running on
+  any build whose origin is unclear before debugging its crashes.

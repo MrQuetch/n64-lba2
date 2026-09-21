@@ -10,7 +10,8 @@ Open-source toolchain only — no leaked SDK anywhere in the pipeline.
 > the N64 (Expansion Pak required): interiors, exteriors, weapons, dialogues,
 > music, sound effects and English voice-overs. Interiors run at 30–60 fps,
 > exteriors at 20–30 fps. Tested on the Ares emulator; real-hardware runs
-> via flashcart are welcome. Saving is **not implemented yet** (see below).
+> via flashcart are welcome. Saves and settings live in the cartridge's
+> SRAM (see below).
 
 This is a sibling of the [Wii U port](https://github.com/vs-sr-dev/wiiu-lba2)
 and of the [Dreamcast port](https://github.com/vs-sr-dev/lba2-dreamcast) of
@@ -64,9 +65,16 @@ commit, compiled on top of the official toolchain image **with one patch to
 reload the callee-saved registers s0–s7 from the exception frame, which
 silently discards the result of this port's unaligned-access emulator
 whenever the faulting load targets one of them (see the devlog, "First
-contact with hardware"). If you already have the image from an earlier
-checkout, rebuild it: `docker build -t n64lba-toolchain:latest -f
-docker/Dockerfile.n64 docker`.
+contact with hardware"). **If you already have an `n64lba-toolchain` image
+from an earlier checkout, rebuild it** — `build-n64.sh` only creates the
+image when it is missing, so a stale one is reused silently and produces a
+ROM that looks fine and crashes at random later. The build now checks the
+linked ELF for the patch and stops if it is absent; to check a ROM you
+already have, run `python tools-n64/check_rom_unaligned_fix.py lba2.z64`.
+
+```
+docker build -t n64lba-toolchain:latest -f docker/Dockerfile.n64 docker
+```
 
 ```
 ./build-n64.sh            # stage assets + build build-n64/lba2.elf + lba2.z64
