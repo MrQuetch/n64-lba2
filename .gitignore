@@ -26,3 +26,9 @@ tests/SNAPSHOT/fixtures/*.raw
 /lba2.z64
 /lba2.dfs
 /lba2.ram
+
+# FMV probe working files (Smacker movies extracted from a local retail
+# install and everything encoded from them; never commit game assets)
+/tools-n64/fmv-probe/work/
+/tools-n64/fmv-probe/filesystem/
+/tools-n64/fmv-probe/fmvprobe.z64

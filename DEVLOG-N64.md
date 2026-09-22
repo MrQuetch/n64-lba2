@@ -272,6 +272,73 @@ validate the header against the end of the load buffer first, so a save
 that is corrupt for any other reason is refused (an empty thumbnail, or a
 fresh start) instead of writing wherever the arithmetic points.
 
+## Full-motion video: measured, not assumed
+
+The port shipped with the cutscenes off, and the README said why: no room in
+the cartridge, and no decoder budget on the CPU. The first half was arithmetic;
+the second was an assumption that had never been tested. It turns out to be
+wrong.
+
+What is actually in `VIDEO.HQR`: 34 Smacker movies, 320x200 at 15 fps, 14.0
+minutes and 223 MB in total, the intro alone 3:53 and 72.8 MB. Their names live
+in `RESS.HQR` entry 48 (`RESS_ACFLIST`), and a name's position in that list is
+its entry number in the archive — which is how `PlayAcf` finds a movie. Track 0
+of each Smacker is the music, tracks 1/2/3 the French, German and English
+voices.
+
+The engine side already exists, from the Wii U tree: `SOURCES/PLAYACF.CPP`
+streams entries out of the archive through libsmacker. On N64 that path is
+compiled out, `InitAcf` tolerates the missing archive, and `PlayAcf` logs a
+skip. Nothing was cauterised, so the question was only ever what the console
+could decode and what would fit.
+
+The decoder answer came from libdragon's `preview` branch, which carries a
+video module the trunk build does not: MPEG-1 *and* H.264 decoders with RSP
+ucode, an `fmv_play` that handles audio sync, seeking and frame dropping, and
+`videoconv64` to encode on the host. `tools-n64/fmv-probe/` builds a ROM
+against that branch which plays the real intro and reports, per frame, how many
+frames the player had to drop and how much wall-clock time the stream took.
+
+In Ares, at 320x192:
+
+| encoding | video size | result |
+|---|---|---|
+| H.264, quality 55 | 3.72 MiB | 377/377 frames, 1.00x realtime, 15.1 fps |
+| H.264, quality 80 | 9.05 MiB | 377/377 frames, 1.00x realtime, 15.1 fps |
+| MPEG-1, quality 55 @24fps | 14.2 MiB | 600/601 frames, 1.00x realtime, 24.1 fps |
+
+Not a single dropped frame in the two H.264 runs, and the cheapest of the three
+is the one that looked flawless on screen. H.264 also keeps the original 15 fps:
+MPEG-1 only allows the standard frame rate codes, so the source has to be
+resampled to 24 or 25 and then costs more to decode for no gain. Audio is
+another 3.66 MiB per copy of the intro as VADPCM — which is what those
+measurements include — or 0.95 MiB as Opus, untested here and not to be assumed
+free: Opus decodes on the VR4300, and that is exactly why the music went back to
+VADPCM.
+
+So the wall is space, not speed. The cartridge today is 60.6 MiB of 64:
+
+| | |
+|---|---|
+| HQR archives | 24.54 MiB (`lba_bkg` 7.62, `samples` 5.49, `screen` 3.29, `body` 2.10, `holomap` 1.91, `anim` 1.14, rest) |
+| voices | 15.83 MiB (1274 Opus clips at 12 kHz) |
+| music | 15.44 MiB (25 VADPCM tracks) |
+| islands (`.ile`/`.obl`) | 3.22 MiB |
+| code | ~0.68 MiB |
+
+That leaves about 3.4 MiB free — not enough for the intro alone in the
+configuration that was measured, and the whole set at that quality would be
+somewhere around 17-18 MiB (a scaling estimate, not a measurement: bitrate
+follows content). Which is a different conversation from the one the README was
+having: not "the machine cannot", but "what comes out to make room", or whether
+a ROM larger than 64 MiB is acceptable for a port people run off a flashcart.
+
+Three things would have to be settled before any of this becomes work. Whether
+real hardware agrees with Ares, which renders through paraLLEl-RDP and makes the
+YUV blit far cheaper than it is on a console. Whether the port can move from the
+pinned trunk commit to `preview`, carrying the `inthandler.S` patch. And where
+the megabytes come from.
+
 ## Diagnostics kept in the tree
 
 - `[renderprof]`/`[affprof]`: per-60-frame breakdown (terrain, object fill,

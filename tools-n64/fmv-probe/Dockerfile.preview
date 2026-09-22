@@ -1,0 +1,17 @@
+# Toolchain image for the FMV probe: libdragon's *preview* branch, which is
+# where the video module lives (src/video: MPEG-1 and H.264 decoders with RSP
+# ucode, fmv.h) together with the videoconv64 host encoder. The shipping port
+# stays on the trunk commit pinned in docker/Dockerfile.n64 — this image exists
+# only to measure what FMV playback would cost, and is not used by build-n64.sh.
+FROM ghcr.io/dragonminded/libdragon:latest
+
+# ffmpeg/ffprobe: videoconv64 drives them for decoding, scaling and 2-pass
+# rate control; python3 (already in the base image) runs video_hqr.py.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch preview https://github.com/DragonMinded/libdragon.git /tmp/libdragon-preview \
+ && cd /tmp/libdragon-preview \
+ && git rev-parse HEAD > /libdragon-preview.commit \
+ && ./build.sh \
+ && cd / && rm -rf /tmp/libdragon-preview

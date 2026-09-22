@@ -37,8 +37,8 @@ a 93 MHz CPU with 8 MB of RAM and a 64 MB cartridge.
 - **Input.** The N64 pad emulates the PC keyboard bindings; D-pad moves,
   the stick holds the behaviour shortcuts. See [CONTROLS-N64.md](CONTROLS-N64.md).
 - **Assets in ROM.** All game data (except FMV) is packed in a DFS image
-  inside the 64 MB cartridge: ~28 MB of HQR/ILE/OBL, 16 MB of music,
-  18 MB of voices.
+  inside the 64 MB cartridge: ~28 MB of HQR/ILE/OBL, 15 MB of music,
+  16 MB of voices.
 
 ## Bring your own assets
 
@@ -140,10 +140,12 @@ is ~2.2 MB and the HQR caches, framebuffers and Z-buffer take another 5 MB.
   the terrain is still drawn every full-refresh frame.
 - **Audio hitches** follow the frame rate: the mixer is pumped once per
   frame, so a 1 s frame is a 1 s dropout.
-- **No FMV.** The Smacker movies are skipped (no room in the cartridge and no
-  decoder budget on the CPU).
+- **No FMV.** The Smacker movies are skipped: 223 MB of them do not fit a
+  cartridge with ~3 MB to spare. Not for want of a decoder, though — the intro
+  re-encoded to H.264 plays from ROM at full speed with no dropped frames, in
+  3.7 MiB. See `tools-n64/fmv-probe/` and the devlog.
 - **Voices are English only** and slightly "telephone" quality (Opus at
-  12 kHz — the only way ~130 minutes of speech fit in 18 MB).
+  12 kHz — the only way ~130 minutes of speech fit in 16 MB).
 - **Scene-change heisenbug.** Very rarely, coming back from the cellar into
   Twinsen's house teleports him onto a wall (a zone `Info3` read as 2048).
   A checksum net is in place to catch it; see the devlog.
@@ -154,6 +156,7 @@ is ~2.2 MB and the HQR caches, framebuffers and Z-buffer take another 5 MB.
 |---|---|
 | `Makefile.n64`, `build-n64.sh` | libdragon build + asset staging (Docker) |
 | `docker/Dockerfile.n64` | toolchain image |
+| `tools-n64/fmv-probe/` | FMV feasibility probe (libdragon preview, not part of the build) |
 | `LIB386/SYSTEM/N64_BACKEND.CPP` | main, timers, logging, keyboard/dirent shims, unaligned-access emulator, frame profiler |
 | `LIB386/SVGA/N64.CPP` | video surface + RDP CI8/TLUT present |
 | `LIB386/AIL/N64/SOUND_N64_BACKEND.CPP` | RSP mixer backend (SFX, music, voices) |
