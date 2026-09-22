@@ -5,6 +5,10 @@
 #include "DIRECTORIES.H"
 #include "RES_DISCOVERY.H"
 #include "INPUT.H"
+#ifdef LBA2_TARGET_N64
+#include "JOYSTICK.H" // N64StickMove
+#include "MUSIC.H"    // JingleVolume / CDVolume
+#endif
 #include "CONSOLE/CONSOLE.H"
 #include <SYSTEM/EVENTS.H>
 #include <SVGA/VIDEO.H>
@@ -2321,6 +2325,101 @@ restartloop:
  *══════════════════════════════════════════════════════════════════════════*/
 /*──────────────────────────────────────────────────────────────────────────*/
 
+#ifdef LBA2_TARGET_N64
+/*──────────────────────────────────────────────────────────────────────────*/
+// WriteConfigFile() only runs at program exit, which never happens on N64
+// (the console is switched off), so the options menu persists its settings
+// itself: OptionsMenu() calls N64SaveOptionsConfig() on the way out, which
+// rewrites only the keys that differ from the last saved state. Every
+// DefFileBufferWriteString() rewrites the whole cfg = one SRAM commit (a 32 KB
+// PI transfer, a few ms), hence the diff. It works in a private heap buffer:
+// ScreenAux, WriteConfigFile()'s buffer, holds the in-game menu backdrop here.
+
+// Same order as N64GetOptions() below.
+static const char *const N64OptionKeys[] = {
+    "WaveVolume",
+    "VoiceVolume",
+    "MusicVolume",
+    "CDVolume",
+    "MasterVolume",
+    "Language",
+    "LanguageCD",
+    "AllCameras",
+    "FollowCamera",
+    "ReverseStereo",
+    "DetailLevel",
+    "FullScreen",
+    "DisplayFullScreen",
+    "FlagDisplayText",
+    "N64StickMove",
+};
+#define N64_OPTION_COUNT (S32)(sizeof(N64OptionKeys) / sizeof(N64OptionKeys[0]))
+
+static S32 N64SavedOptions[N64_OPTION_COUNT];
+
+static void N64GetOptions(S32 *v) {
+    S32 n = 0;
+    v[n++] = SampleVolume;
+    v[n++] = VoiceVolume;
+    v[n++] = (S32)JingleVolume;
+    v[n++] = (S32)CDVolume;
+    v[n++] = MasterVolume;
+    v[n++] = Language;
+    v[n++] = LanguageCD;
+    v[n++] = AllCameras;
+    v[n++] = FollowCamera;
+    v[n++] = ReverseStereo;
+    v[n++] = DetailLevel;
+    v[n++] = VideoFullScreen;
+    v[n++] = DisplayFullScreen;
+    v[n++] = FlagDisplayText;
+    v[n++] = N64StickMove;
+}
+
+void N64SaveOptionsConfig(void) {
+    S32 cur[N64_OPTION_COUNT];
+    S32 n, changed = 0;
+
+    N64GetOptions(cur);
+    for (n = 0; n < N64_OPTION_COUNT; n++) {
+        if (cur[n] != N64SavedOptions[n])
+            changed++;
+    }
+    if (!changed)
+        return;
+
+    S32 size = FileSize(PathConfigFile);
+    if (!size)
+        return;
+
+    size += 1024; // room for keys the cfg doesn't have yet
+    void *buf = malloc(size);
+    if (!buf) {
+        LogPuts("N64SaveOptionsConfig: out of memory, options not saved");
+        return;
+    }
+
+    if (DefFileBufferInit(PathConfigFile, buf, size)) {
+        for (n = 0; n < N64_OPTION_COUNT; n++) {
+            if (cur[n] == N64SavedOptions[n])
+                continue;
+
+            const char *key = N64OptionKeys[n];
+            if (!strcmp(key, "Language") OR !strcmp(key, "LanguageCD")) {
+                DefFileBufferWriteString(key, GetLanguageName(cur[n]));
+            } else if (!strcmp(key, "FlagDisplayText")) {
+                DefFileBufferWriteString(key, cur[n] ? "ON" : "OFF");
+            } else {
+                DefFileBufferWriteValue(key, cur[n]);
+            }
+            N64SavedOptions[n] = cur[n];
+        }
+        LogPrintf("N64SaveOptionsConfig: %d option(s) saved\n", changed);
+    }
+    free(buf);
+}
+#endif
+
 void ReadConfigFile(void) {
     const char *ptr;
 
@@ -2404,6 +2503,10 @@ void ReadConfigFile(void) {
         FlagMenuMouse = TRUE;
     else
         FlagMenuMouse = FALSE;
+
+#ifdef LBA2_TARGET_N64
+    N64GetOptions(N64SavedOptions); // baseline for N64SaveOptionsConfig()
+#endif
 }
 
 /*──────────────────────────────────────────────────────────────────────────*/

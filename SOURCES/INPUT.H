@@ -125,6 +125,10 @@ extern void WaitInput(void);
 extern void ReadGamepadConfig(void);
 //-------------------------------------------------------------------------
 extern void WriteGamepadConfig(void);
+#ifdef LBA2_TARGET_N64
+//-------------------------------------------------------------------------
+extern void N64SaveOptionsConfig(void); // PERSO.CPP
+#endif
 //-------------------------------------------------------------------------
 
 #endif // INPUT_H

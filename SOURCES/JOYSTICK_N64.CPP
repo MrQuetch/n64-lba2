@@ -37,9 +37,12 @@
 //   Stick-down    Behaviour: Aggressive          F7
 //
 // The stick is decoupled from movement (D-pad only) so its four cardinals are
-// free for the behaviour/protopack shortcuts. Injected keys are held for as
-// long as the control is; N64Joy_ReinjectKeys() re-applies them after
-// ManageKeyboard()'s per-call clear of the keyboard range (N64_BACKEND.CPP).
+// free for the behaviour/protopack shortcuts. The "Move with: Stick" option
+// (N64StickMove, Controls menu, persisted in the SRAM cfg) swaps the two roles
+// for gameplay: stick = move, D-pad = behaviours/protopack. Menus accept both
+// either way. Injected keys are held for as long as the control is;
+// N64Joy_ReinjectKeys() re-applies them after ManageKeyboard()'s per-call
+// clear of the keyboard range (N64_BACKEND.CPP).
 //
 // The WiiUTouch_* / WiiUTouchPanel_* symbols referenced by WIIU-gated engine
 // code are provided here as no-op shims (no touch screen on N64).
@@ -68,6 +71,9 @@ S32 JoystickDeadzone = 32;
 // full deflection). ~28% of full travel: past the loose-centre slop, short of
 // requiring a hard push for the behaviour/protopack shortcuts.
 #define N64_STICK_DEADZONE 24
+
+// 0 = D-pad moves, stick = behaviour shortcuts (default); 1 = swapped.
+S32 N64StickMove = 0;
 
 // Mirror of the SDL backend's bit-packing helpers (KEYBOARD.CPP layout).
 #define PAD_KEY_INDEX(x) (256 - 32 + ((x) >> 3))
@@ -207,11 +213,17 @@ static int ReadPad(U32 *hold) {
     // Stick digital emulation. Raw N64 stick range is roughly ±85; the
     // threshold is N64_STICK_DEADZONE in those raw units (NOT the global
     // JoystickDeadzone, which the cfg pins to an SDL-unit value that would
-    // leave the stick dead — see the note by its definition).
-    if (in.stick_y > N64_STICK_DEADZONE) h |= HB_STICK_UP;
-    if (in.stick_y < -N64_STICK_DEADZONE) h |= HB_STICK_DOWN;
-    if (in.stick_x < -N64_STICK_DEADZONE) h |= HB_STICK_LEFT;
-    if (in.stick_x > N64_STICK_DEADZONE) h |= HB_STICK_RIGHT;
+    // leave the stick dead — see the note by its definition). Past the
+    // deadzone the direction is split into 8 sectors of 45°: an axis counts
+    // only within 67.5° of it (|axis| * 2.414 > |other|), so a slightly
+    // off-axis push stays a pure cardinal instead of adding a stray turn
+    // (tank-control movement) or a second behaviour shortcut.
+    S32 sx = in.stick_x, sy = in.stick_y;
+    S32 ax = sx < 0 ? -sx : sx, ay = sy < 0 ? -sy : sy;
+    if (ax > N64_STICK_DEADZONE || ay > N64_STICK_DEADZONE) {
+        if (ay * 2414 > ax * 1000) h |= (sy > 0) ? HB_STICK_UP : HB_STICK_DOWN;
+        if (ax * 2414 > ay * 1000) h |= (sx > 0) ? HB_STICK_RIGHT : HB_STICK_LEFT;
+    }
 
     *hold = h;
     return 1;
@@ -249,8 +261,16 @@ void N64Joy_ReinjectKeys(void) {
     if (!s_padPresent || !s_curHold) {
         return;
     }
+    U32 hold = s_curHold;
+    if (N64StickMove) {
+        // Swap the D-pad and stick direction bits (both use the same
+        // UP/DOWN/LEFT/RIGHT order, 4 bits apart) for the gameplay layer only.
+        const U32 dpad = HB_D_UP | HB_D_DOWN | HB_D_LEFT | HB_D_RIGHT;
+        const U32 stick = HB_STICK_UP | HB_STICK_DOWN | HB_STICK_LEFT | HB_STICK_RIGHT;
+        hold = (hold & ~(dpad | stick)) | ((hold & dpad) << 4) | ((hold & stick) >> 4);
+    }
     for (size_t i = 0; i < sizeof(kKbMap) / sizeof(kKbMap[0]); i++) {
-        if (s_curHold & kKbMap[i].holdBit) {
+        if (hold & kKbMap[i].holdBit) {
             U32 sc = kKbMap[i].scancode;
             if (sc < 256) {
                 TabKeys[sc] = 0x80; // N64 CheckKey tests != 0; 0x80 matches KeyBit

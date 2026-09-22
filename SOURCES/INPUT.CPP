@@ -257,6 +257,9 @@ void WriteInputConfig(void) {
 
 //-------------------------------------------------------------------------
 void ReadGamepadConfig(void) {
+#ifdef LBA2_TARGET_N64
+    N64StickMove = DefFileBufferReadValueDefault("N64StickMove", 0) ? 1 : 0;
+#endif
     JoystickDeadzone = DefFileBufferReadValueDefault("GamepadDeadzone", 8000);
     if (JoystickDeadzone < 0)
         JoystickDeadzone = 0;
@@ -289,6 +292,10 @@ void ReadGamepadConfig(void) {
 void WriteGamepadConfig(void) {
     if (!FileSize(PathConfigFile))
         return;
+
+#ifdef LBA2_TARGET_N64
+    DefFileBufferWriteValue("N64StickMove", N64StickMove);
+#endif
 
     DefFileBufferWriteValue("GamepadDeadzone", JoystickDeadzone);
     DefFileBufferWriteValue("GamepadMapVersion", GAMEPAD_MAP_VERSION);

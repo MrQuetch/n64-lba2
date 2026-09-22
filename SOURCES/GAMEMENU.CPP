@@ -68,6 +68,7 @@ S32 FlagShowEndDemo = FALSE;
 #define MENU_ID_FOLLOW_CAMERA 2111
 #define MENU_ID_CONTROLLER 2112
 #define MENU_ID_GAMEPAD_CONFIG 2113
+#define MENU_ID_N64_STICK_MOVE 2114
 
 #define MENU_TYPE_TEXT_LANGUAGE 8
 #define MENU_TYPE_VOICE_LANGUAGE 9
@@ -117,13 +118,21 @@ U16 GameOptionMenu[] = {
 // Controller submenu: split keyboard remap and gamepad remap under one parent
 // so adding the pad doesn't clutter the top-level Options screen.
 U16 ControllerMenu[] = {
-    0,   // selected
-    3,   // nb entries
+    0, // selected
+#ifdef LBA2_TARGET_N64
+    4, // nb entries
+#else
+    3, // nb entries
+#endif
     260, // y center
     0,   // .dia num
 
     0,
     26, // menu precedent
+#ifdef LBA2_TARGET_N64
+    0,
+    MENU_ID_N64_STICK_MOVE, // stick/D-pad role swap (JOYSTICK_N64.CPP)
+#endif
     0,
     14, // Configuration Clavier (existing keyboard remap screen)
     0,
@@ -289,6 +298,8 @@ enum MenuLocalizedLabel {
     MENU_LABEL_CLASSIC_CAMERA,
     MENU_LABEL_CONTROLLER,
     MENU_LABEL_GAME_CONTROLLER,
+    MENU_LABEL_MOVE_DPAD,
+    MENU_LABEL_MOVE_STICK,
     MENU_LABEL_COUNT,
 };
 
@@ -310,6 +321,8 @@ static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
         "Classic camera",
         "Controls",
         "Configure gamepad",
+        "Move with: D-pad",
+        "Move with: Stick",
     },
     {
         "Choix de la langue",
@@ -322,6 +335,8 @@ static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
         "Cam\x82ra classique",
         "Contr\x93les",
         "Configuration manette",
+        "D\x82placement : croix",
+        "D\x82placement : stick",
     },
     {
         "Sprachauswahl",
@@ -334,6 +349,8 @@ static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
         "Klassische Kamera",
         "Steuerung",
         "Gamepad konfigurieren",
+        "Bewegung: Steuerkreuz",
+        "Bewegung: Stick",
     },
     {
         "Elegir idioma",
@@ -346,6 +363,8 @@ static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
         "C\xA0mara cl\xA0sica",
         "Controles",
         "Configurar mando",
+        "Movimiento: cruceta",
+        "Movimiento: stick",
     },
     {
         "Scegli lingua",
@@ -358,6 +377,8 @@ static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
         "Telecamera classica",
         "Controlli",
         "Configura gamepad",
+        "Movimento: croce",
+        "Movimento: levetta",
     },
     {
         "Escolha do idioma",
@@ -370,6 +391,8 @@ static const char *LocalizedMenuLabels[6][MENU_LABEL_COUNT] = {
         "C\x83mera cl\xA0ssica",
         "Controles",
         "Configurar gamepad",
+        "Movimento: direcional",
+        "Movimento: anal\xA2gico",
     },
 };
 
@@ -412,6 +435,12 @@ static void BuildCustomMenuText(S32 num, char *string) {
     case MENU_ID_GAMEPAD_CONFIG:
         CopyUtf8ToCp850(string, 256, GetLocalizedMenuLabel(MENU_LABEL_GAME_CONTROLLER));
         break;
+
+#ifdef LBA2_TARGET_N64
+    case MENU_ID_N64_STICK_MOVE:
+        CopyUtf8ToCp850(string, 256, GetLocalizedMenuLabel(N64StickMove ? MENU_LABEL_MOVE_STICK : MENU_LABEL_MOVE_DPAD));
+        break;
+#endif
 
     case MENU_ID_TEXT_LANGUAGE:
         FormatUtf8ToCp850(string, 256, GetLocalizedMenuLabel(MENU_LABEL_TEXT_LANGUAGE), GetLanguageName(Language));
@@ -2948,6 +2977,12 @@ S32 GereControllerMenu(void) {
         case MENU_ID_GAMEPAD_CONFIG:
             MenuGamepadConfig();
             break;
+
+#ifdef LBA2_TARGET_N64
+        case MENU_ID_N64_STICK_MOVE:
+            N64StickMove ^= 1;
+            break;
+#endif
         }
     }
 
@@ -3021,6 +3056,9 @@ S32 OptionsMenu(S32 flagflip) {
 
     HQ_StopSample();
     SetDetailLevel(); // prise en compte des différentes options
+#ifdef LBA2_TARGET_N64
+    N64SaveOptionsConfig(); // WriteConfigFile() never runs on N64 (power off)
+#endif
 
     if (flagflip) {
         CopyScreen(Screen, Log);

@@ -11,6 +11,12 @@ extern "C" {
 /*--------------------------------------------------------------------------*/
 extern S32 JoystickDeadzone; // GamepadDeadzone config, SDL axis units (0..32767)
 
+#ifdef LBA2_TARGET_N64
+// "N64StickMove" cfg / Controls menu: 1 = stick moves Twinsen and the D-pad
+// takes the behaviour/protopack shortcuts (JOYSTICK_N64.CPP); 0 = the reverse.
+extern S32 N64StickMove;
+#endif
+
 /*--------------------------------------------------------------------------*/
 void InitJoystick(void);
 void EndJoystick(void);
